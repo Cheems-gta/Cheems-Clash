@@ -100,6 +100,7 @@ fun CheemsApp() {
         if(it.resultCode==Activity.RESULT_OK) start() else message="未授权 VPN，连接未启动"
     }
     val notifications=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(Unit) { if(Build.VERSION.SDK_INT>=33) notifications.launch(Manifest.permission.POST_NOTIFICATIONS) }
     val openFile=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if(uri!=null && !running && !busy) scope.launch {
             importing=true
@@ -136,7 +137,6 @@ fun CheemsApp() {
                                 if(running) context.startService(Intent(context,ClashVpnService::class.java).setAction("STOP"))
                                 else if(!hasProfile) { tab=2; message="请先导入配置" }
                                 else {
-                                    if(Build.VERSION.SDK_INT>=33) notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
                                     val request=VpnService.prepare(context)
                                     if(request==null) start() else vpnPermission.launch(request)
                                 }
