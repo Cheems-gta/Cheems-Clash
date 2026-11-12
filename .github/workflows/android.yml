@@ -5,12 +5,12 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,12 +27,26 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Build Cheems Clash debug APK
+      - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace --no-daemon
-      - name: Upload APK
-        if: success()
+      - name: Verify APK exists and is nonempty
+        run: |
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          unzip -t app/build/outputs/apk/debug/app-debug.apk | tail -n 2
+          sha256sum app/build/outputs/apk/debug/app-debug.apk
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: Cheems-Clash-v0.1-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+      - name: Publish preview release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v0.1-preview-${GITHUB_RUN_NUMBER}"
+          gh release create "$tag" app/build/outputs/apk/debug/app-debug.apk \
+            --title "Cheems Clash v0.1 Preview #${GITHUB_RUN_NUMBER}" \
+            --notes "Debug APK for UI testing only. No Mihomo engine or VPN connection is implemented yet." \
+            --prerelease \
+            --target "$GITHUB_SHA"
