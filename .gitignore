@@ -1,0 +1,6 @@
+.gradle/
+**/build/
+app/libs/
+mihomo-src/
+local.properties
+*.jks
