@@ -78,3 +78,4 @@ func Delay(name string) (int,error) {
  d,err:=p.URLTest(ctx,"https://www.gstatic.com/generate_204",nil); return int(d),err
 }
 func Version() string { return "Mihomo v1.19.34" }
+func TotalTraffic() string { up,down:=statistic.DefaultManager.Total(); b,_:=json.Marshal(map[string]int64{"up":up,"down":down}); return string(b) }

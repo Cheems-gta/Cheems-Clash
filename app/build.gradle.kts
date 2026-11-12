@@ -10,7 +10,7 @@ android {
         applicationId = "com.cheems.clash"
         minSdk = 26
         targetSdk = 35
-        testInstrumentationRunner = "android.test.InstrumentationTestRunner"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = 2
         versionName = "0.2.0"
     }
@@ -23,6 +23,8 @@ android {
     buildFeatures { compose = true }
 }
 dependencies {
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
     implementation(files("libs/core.aar"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))

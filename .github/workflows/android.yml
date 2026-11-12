@@ -80,12 +80,15 @@ jobs:
           arch: x86_64
           disable-animations: true
           script: |
+            mkdir -p /tmp/cheems-probe
+            echo CHEEMS_TUN_OK > /tmp/cheems-probe/health.txt
+            python3 -m http.server 8765 --directory /tmp/cheems-probe > /tmp/cheems-http.log 2>&1 &
             adb install app/build/outputs/apk/debug/app-debug.apk
             adb install app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             adb shell appops set com.cheems.clash ACTIVATE_VPN allow
             adb shell pm grant com.cheems.clash android.permission.POST_NOTIFICATIONS
             adb shell am start -n com.cheems.clash/.MainActivity
-            adb shell am instrument -w com.cheems.clash.test/android.test.InstrumentationTestRunner | tee instrumentation.txt
+            adb shell am instrument -w com.cheems.clash.test/androidx.test.runner.AndroidJUnitRunner | tee instrumentation.txt
             grep -q 'OK (1 test)' instrumentation.txt
       - name: Publish preview release
         env:

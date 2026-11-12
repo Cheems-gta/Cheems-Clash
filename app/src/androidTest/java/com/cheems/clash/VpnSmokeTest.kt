@@ -2,17 +2,25 @@ package com.cheems.clash
 
 import android.content.Intent
 import android.net.VpnService
-import android.test.InstrumentationTestCase
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.junit.Assert.*
 import core.Core
 import java.io.File
+import java.io.FileInputStream
+import org.json.JSONObject
 
-@Suppress("DEPRECATION")
-class VpnSmokeTest : InstrumentationTestCase() {
+@RunWith(AndroidJUnit4::class)
+class VpnSmokeTest {
+    private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private fun awaitState(check: () -> Boolean) {
         val deadline=System.currentTimeMillis()+45000
         while(!check() && System.currentTimeMillis()<deadline) Thread.sleep(200)
         assertTrue("VPN state=${VpnState.status.value}, error=${VpnState.error.value}",check())
     }
+    @Test
     fun testStartSelectStopRestart() {
         val context=instrumentation.targetContext
         assertNull("CI must grant ACTIVATE_VPN",VpnService.prepare(context))
@@ -34,6 +42,11 @@ class VpnSmokeTest : InstrumentationTestCase() {
                 assertTrue(Core.proxies().contains("REJECT"))
                 Core.select("TEST","DIRECT")
                 assertTrue(Core.traffic().contains("up"))
+                val descriptor = instrumentation.uiAutomation.executeShellCommand("sh -c 'printf \"GET /health.txt HTTP/1.0\\r\\nHost: 10.0.2.2\\r\\n\\r\\n\" | toybox nc -w 10 10.0.2.2 8765'")
+                val response = android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }
+                assertTrue("TUN HTTP probe failed: $response", response.contains("CHEEMS_TUN_OK"))
+                val totals = JSONObject(Core.totalTraffic())
+                assertTrue("Probe bypassed TUN", totals.getLong("up") > 0 && totals.getLong("down") > 0)
                 context.startService(Intent(context,ClashVpnService::class.java).setAction("STOP"))
                 awaitState { !VpnState.running.value && !VpnState.busy.value }
             }
