@@ -46,7 +46,7 @@ jobs:
         env:
           ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/27.2.12479018
         run: |
-          go get golang.org/x/mobile@19777044486779222400e9ca16c4306f9c6dbfa9
+          go get -tool golang.org/x/mobile/cmd/gobind@19777044486779222400e9ca16c4306f9c6dbfa9
           go mod tidy
           go install golang.org/x/mobile/cmd/gomobile@19777044486779222400e9ca16c4306f9c6dbfa9
           go install golang.org/x/mobile/cmd/gobind@19777044486779222400e9ca16c4306f9c6dbfa9
@@ -54,7 +54,7 @@ jobs:
           mkdir -p ../app/libs
           gomobile bind -target=android/arm64,android/amd64 -androidapi 26 -o ../app/libs/core.aar .
       - name: Build debug APK
-        run: gradle :app:assembleDebug --stacktrace --no-daemon
+        run: gradle :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace --no-daemon
       - name: Verify APK exists and is nonempty
         run: |
           test -s app/build/outputs/apk/debug/app-debug.apk
@@ -68,6 +68,25 @@ jobs:
           name: Cheems-Clash-v0.2-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+      - name: Enable KVM for Android test
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Android VPN lifecycle smoke test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          disable-animations: true
+          script: |
+            adb install app/build/outputs/apk/debug/app-debug.apk
+            adb install app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            adb shell appops set com.cheems.clash ACTIVATE_VPN allow
+            adb shell pm grant com.cheems.clash android.permission.POST_NOTIFICATIONS
+            adb shell am start -n com.cheems.clash/.MainActivity
+            adb shell am instrument -w com.cheems.clash.test/android.test.InstrumentationTestRunner | tee instrumentation.txt
+            grep -q 'OK (1 test)' instrumentation.txt
       - name: Publish preview release
         env:
           GH_TOKEN: ${{ github.token }}

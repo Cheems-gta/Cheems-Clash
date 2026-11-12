@@ -54,11 +54,12 @@ func Start(home, text string, fd int, protector Protector) error {
  executor.ApplyConfig(cfg,true)
  duplicate, err := syscall.Dup(fd); if err != nil { stop(); return err }
  tun, err = sing_tun.New(LC.Tun{Enable:true, Device:"cheems", Stack:C.TunGvisor, MTU:1500, FileDescriptor:duplicate, DNSHijack:[]string{"any:53"}, Inet4Address:[]netip.Prefix{netip.MustParsePrefix("172.19.0.1/30")}}, tunnel.Tunnel)
- if err != nil { syscall.Close(duplicate); stop(); return err }
+ if err != nil { stop(); return err }
  statistic.DefaultManager.ResetStatistic()
  return nil
 }
 func stop() {
+ tunnel.OnSuspend()
  if tun != nil { _=tun.Close(); tun=nil }
  listener.Cleanup()
  statistic.DefaultManager.Range(func(t statistic.Tracker) bool { _=t.Close(); return true })

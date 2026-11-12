@@ -10,6 +10,7 @@ android {
         applicationId = "com.cheems.clash"
         minSdk = 26
         targetSdk = 35
+        testInstrumentationRunner = "android.test.InstrumentationTestRunner"
         versionCode = 2
         versionName = "0.2.0"
     }
