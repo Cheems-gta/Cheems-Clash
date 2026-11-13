@@ -39,7 +39,7 @@ class VpnSmokeTest {
                 awaitState { VpnState.running.value && !VpnState.busy.value }
                 val notifications = context.getSystemService(android.app.NotificationManager::class.java)
                 val posted = notifications.activeNotifications.single { it.id == 2 }.notification
-                assertEquals(R.drawable.ic_stat_cheems, posted.smallIcon.resId)
+                assertEquals(R.drawable.ic_notification, posted.smallIcon.resId)
                 assertNull("Do not add a second notification icon", posted.getLargeIcon())
                 val smallIcon = posted.smallIcon.loadDrawable(context)
                 assertNotNull("Cheems small icon must load", smallIcon)
