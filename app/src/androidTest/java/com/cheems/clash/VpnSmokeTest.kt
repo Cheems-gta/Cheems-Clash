@@ -42,7 +42,7 @@ class VpnSmokeTest {
                 assertTrue(Core.proxies().contains("REJECT"))
                 Core.select("TEST","DIRECT")
                 assertTrue(Core.traffic().contains("up"))
-                val descriptor = instrumentation.uiAutomation.executeShellCommand("sh -c 'printf \"GET /health.txt HTTP/1.0\\r\\nHost: 10.0.2.2\\r\\n\\r\\n\" | toybox nc -w 10 10.0.2.2 8765'")
+                val descriptor = instrumentation.uiAutomation.executeShellCommand("sh /data/local/tmp/cheems-probe.sh")
                 val response = android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }
                 assertTrue("TUN HTTP probe failed: $response", response.contains("CHEEMS_TUN_OK"))
                 val totals = JSONObject(Core.totalTraffic())
