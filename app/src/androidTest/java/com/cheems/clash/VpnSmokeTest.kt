@@ -38,14 +38,20 @@ class VpnSmokeTest {
                 context.startForegroundService(Intent(context,ClashVpnService::class.java))
                 awaitState { VpnState.running.value && !VpnState.busy.value }
                 val notifications = context.getSystemService(android.app.NotificationManager::class.java)
-                val posted = notifications.activeNotifications.single { it.id == 1 }.notification
-                assertEquals(R.drawable.ic_stat_cheems, posted.smallIcon.resId)
-                assertEquals(context.packageName, posted.smallIcon.resPackage)
+                val posted = notifications.activeNotifications.single { it.id == 2 }.notification
+                assertEquals(android.graphics.drawable.Icon.TYPE_BITMAP, posted.smallIcon.type)
                 assertNotNull("Cheems large icon must be set", posted.getLargeIcon())
-                assertEquals(R.mipmap.cheems_app_icon, posted.getLargeIcon().resId)
-                assertEquals(context.packageName, posted.getLargeIcon().resPackage)
-                assertTrue("Notification must load a raster icon", posted.smallIcon.loadDrawable(context) is android.graphics.drawable.BitmapDrawable)
-                assertTrue(posted.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString().contains("v0.2.5"))
+                assertEquals(android.graphics.drawable.Icon.TYPE_BITMAP, posted.getLargeIcon().type)
+                for (icon in listOf(posted.smallIcon, posted.getLargeIcon())) {
+                    val drawable = icon.loadDrawable(context) as android.graphics.drawable.BitmapDrawable
+                    val bitmap = drawable.bitmap
+                    val pixels = IntArray(bitmap.width * bitmap.height)
+                    bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+                    assertTrue("Notification icon must contain visible pixels",
+                        pixels.any { android.graphics.Color.alpha(it) > 0 })
+                }
+                assertFalse("Legacy notification must be removed", notifications.activeNotifications.any { it.id == 1 })
+                assertTrue(posted.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString().contains("v0.2.6"))
                 val appIcon = context.packageManager.getApplicationIcon(context.packageName)
                 assertTrue("Application must load its adaptive icon", appIcon is android.graphics.drawable.AdaptiveIconDrawable)
                 assertEquals(R.mipmap.cheems_app_icon, context.applicationInfo.icon)

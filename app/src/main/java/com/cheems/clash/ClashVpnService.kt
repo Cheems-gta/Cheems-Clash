@@ -35,9 +35,15 @@ class ClashVpnService : VpnService() {
         manager.createNotificationChannel(NotificationChannel("vpn", "VPN 连接", NotificationManager.IMPORTANCE_LOW))
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val stop = PendingIntent.getService(this, 1, Intent(this, ClashVpnService::class.java).setAction("STOP"), PendingIntent.FLAG_IMMUTABLE)
-        startForeground(1, Notification.Builder(this,"vpn").setContentTitle("Cheems Clash")
-            .setContentText("VPN 服务运行中 · v0.2.5").setSmallIcon(R.drawable.ic_stat_cheems)
-            .setLargeIcon(android.graphics.drawable.Icon.createWithResource(this, R.mipmap.cheems_app_icon))
+        // Load pixels in the app process so OEM SystemUI does not need to resolve
+        // density-specific resources or adaptive icons for this notification.
+        val smallBitmap = requireNotNull(android.graphics.BitmapFactory.decodeResource(resources, R.drawable.ic_stat_cheems))
+        val largeBitmap = requireNotNull(android.graphics.BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher))
+        manager.cancel(1) // Retire notifications posted by releases through v0.2.5.
+        startForeground(2, Notification.Builder(this,"vpn").setContentTitle("Cheems Clash")
+            .setContentText("VPN 服务运行中 · v0.2.6")
+            .setSmallIcon(android.graphics.drawable.Icon.createWithBitmap(smallBitmap))
+            .setLargeIcon(largeBitmap)
             .setContentIntent(open).addAction(Notification.Action.Builder(null,"断开",stop).build()).setOngoing(true).build())
         worker.execute {
             try {
