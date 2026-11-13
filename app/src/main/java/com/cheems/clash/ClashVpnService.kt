@@ -36,7 +36,7 @@ class ClashVpnService : VpnService() {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val stop = PendingIntent.getService(this, 1, Intent(this, ClashVpnService::class.java).setAction("STOP"), PendingIntent.FLAG_IMMUTABLE)
         startForeground(1, Notification.Builder(this,"vpn").setContentTitle("Cheems Clash")
-            .setContentText("VPN 服务运行中").setSmallIcon(R.drawable.ic_notification)
+            .setContentText("VPN 服务运行中 · v0.2.4").setSmallIcon(R.drawable.ic_stat_cheems)
             .setLargeIcon(android.graphics.BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher))
             .setContentIntent(open).addAction(Notification.Action.Builder(null,"断开",stop).build()).setOngoing(true).build())
         worker.execute {
