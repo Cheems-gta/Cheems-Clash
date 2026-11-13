@@ -35,13 +35,10 @@ class ClashVpnService : VpnService() {
         manager.createNotificationChannel(NotificationChannel("vpn", "VPN 连接", NotificationManager.IMPORTANCE_LOW))
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val stop = PendingIntent.getService(this, 1, Intent(this, ClashVpnService::class.java).setAction("STOP"), PendingIntent.FLAG_IMMUTABLE)
-        // Use the same flat brand artwork as the package identity icon.
-        val largeBitmap = requireNotNull(android.graphics.BitmapFactory.decodeResource(resources, R.mipmap.cheems_brand_icon))
         manager.cancel(1) // Retire notifications posted by releases through v0.2.5.
         startForeground(2, Notification.Builder(this,"vpn").setContentTitle("Cheems Clash")
             .setContentText("VPN 服务运行中 · v0.2.7")
             .setSmallIcon(R.drawable.ic_stat_cheems)
-            .setLargeIcon(largeBitmap)
             .setContentIntent(open).addAction(Notification.Action.Builder(null,"断开",stop).build()).setOngoing(true).build())
         worker.execute {
             try {
