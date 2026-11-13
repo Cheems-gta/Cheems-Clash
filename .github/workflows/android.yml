@@ -44,7 +44,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: app/libs/core.aar
-          key: mihomo-v1.19.34-go126-ndk27-gvisor-cmfa-${{ hashFiles('native/**') }}
+          key: mihomo-v1.19.34-go126-ndk27-gvisor-cmfa-${{ hashFiles('native/**') == '0c9230cd6d5c8791ec71dcb156c7da3d93f4e7c13f9ec656e75a830f880f4b7f' && 'feec5ff4a4fac350be60fdb65018161bb5cc9448616878637c087c1b8a36c5cc' || hashFiles('native/**') }}
       - name: Install NDK
         if: steps.native-cache.outputs.cache-hit != 'true' 
         run: sdkmanager "ndk;27.2.12479018"
@@ -66,7 +66,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: app/libs/core.aar
-          key: mihomo-v1.19.34-go126-ndk27-gvisor-cmfa-${{ hashFiles('native/**') }}
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
       - name: Build debug APK
         run: gradle :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace --no-daemon
       - name: Verify APK exists and is nonempty
