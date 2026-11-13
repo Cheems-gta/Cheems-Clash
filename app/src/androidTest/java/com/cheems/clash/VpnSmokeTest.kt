@@ -41,8 +41,11 @@ class VpnSmokeTest {
                 val posted = notifications.activeNotifications.single { it.id == 1 }.notification
                 assertEquals(R.drawable.ic_stat_cheems, posted.smallIcon.resId)
                 assertEquals(context.packageName, posted.smallIcon.resPackage)
+                assertNotNull("Cheems large icon must be set", posted.getLargeIcon())
+                assertEquals(R.mipmap.cheems_app_icon, posted.getLargeIcon().resId)
+                assertEquals(context.packageName, posted.getLargeIcon().resPackage)
                 assertTrue("Notification must load a raster icon", posted.smallIcon.loadDrawable(context) is android.graphics.drawable.BitmapDrawable)
-                assertTrue(posted.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString().contains("v0.2.4"))
+                assertTrue(posted.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString().contains("v0.2.5"))
                 val appIcon = context.packageManager.getApplicationIcon(context.packageName)
                 assertTrue("Application must load its adaptive icon", appIcon is android.graphics.drawable.AdaptiveIconDrawable)
                 assertEquals(R.mipmap.cheems_app_icon, context.applicationInfo.icon)
