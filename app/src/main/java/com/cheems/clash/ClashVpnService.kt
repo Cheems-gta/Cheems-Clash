@@ -4,6 +4,7 @@ import android.app.*
 import android.content.Intent
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import core.Core
 import core.Protector
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,6 +16,7 @@ object VpnState {
     val running = MutableStateFlow(false)
     val busy = MutableStateFlow(false)
     val error = MutableStateFlow("")
+    val startupMetrics = MutableStateFlow("尚无连接耗时数据")
 }
 
 class ClashVpnService : VpnService() {
@@ -28,6 +30,7 @@ class ClashVpnService : VpnService() {
         if (intent?.action == "STOP") { requestStop(); return START_NOT_STICKY }
         if (VpnState.busy.value || VpnState.running.value) return START_NOT_STICKY
         cancelled = false
+        val startupAt = SystemClock.elapsedRealtime()
         VpnState.busy.value = true
         VpnState.error.value = ""
         VpnState.status.value = "正在启动内核…"
@@ -42,17 +45,23 @@ class ClashVpnService : VpnService() {
             .setContentIntent(open).addAction(Notification.Action.Builder(null,"断开",stop).build()).setOngoing(true).build())
         worker.execute {
             try {
+                val workerAt = SystemClock.elapsedRealtime()
                 val config = File(filesDir, "profile.yaml")
                 require(config.isFile) { "请先导入 YAML 配置或订阅" }
                 val text = config.readText()
                 check(!cancelled) { "连接已取消" }
+                val configAt = SystemClock.elapsedRealtime()
                 device = Builder().setSession("Cheems Clash").setMtu(1500)
                     .addAddress("172.19.0.1",30).addRoute("0.0.0.0",0).addDnsServer("172.19.0.2")
                     // Excluding our own sockets prevents provider downloads and bootstrap DNS loops.
                     .addDisallowedApplication(packageName).establish()
                     ?: error("VPN 授权已失效")
+                val tunAt = SystemClock.elapsedRealtime()
                 Core.start(File(filesDir,"mihomo").absolutePath,text,device!!.fd.toLong(),protector)
                 check(!cancelled) { "连接已取消" }
+                val readyAt = SystemClock.elapsedRealtime()
+                VpnState.startupMetrics.value = "总耗时 ${readyAt - startupAt} ms · 服务排队 ${workerAt - startupAt} ms · 配置读取 ${configAt - workerAt} ms · TUN ${tunAt - configAt} ms · Mihomo ${readyAt - tunAt} ms"
+                android.util.Log.i("CheemsStartup", VpnState.startupMetrics.value)
                 VpnState.running.value = true
                 VpnState.status.value = "已连接"
             } catch (e: Exception) {
