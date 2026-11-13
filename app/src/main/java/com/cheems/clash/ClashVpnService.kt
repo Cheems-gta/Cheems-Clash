@@ -38,7 +38,7 @@ class ClashVpnService : VpnService() {
         manager.cancel(1) // Retire notifications posted by releases through v0.2.5.
         startForeground(2, Notification.Builder(this,"vpn").setContentTitle("Cheems Clash")
             .setContentText("VPN 服务运行中 · v0.2.7")
-            .setSmallIcon(R.drawable.ic_stat_cheems)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(open).addAction(Notification.Action.Builder(null,"断开",stop).build()).setOngoing(true).build())
         worker.execute {
             try {
