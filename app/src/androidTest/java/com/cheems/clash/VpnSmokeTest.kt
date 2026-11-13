@@ -55,9 +55,9 @@ class VpnSmokeTest {
                 val appIcon = context.packageManager.getApplicationIcon(context.packageName)
                 assertTrue("Application identity must load a flat bitmap", appIcon is android.graphics.drawable.BitmapDrawable)
                 assertEquals(R.mipmap.cheems_brand_icon, context.applicationInfo.icon)
-                val expected = android.graphics.BitmapFactory.decodeResource(context.resources, R.mipmap.cheems_brand_icon)
+                val expected = (context.getDrawable(R.mipmap.cheems_brand_icon) as android.graphics.drawable.BitmapDrawable).bitmap.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
                 assertTrue("Application icon pixels must match Cheems artwork",
-                    (appIcon as android.graphics.drawable.BitmapDrawable).bitmap.sameAs(expected))
+                    (appIcon as android.graphics.drawable.BitmapDrawable).bitmap.copy(android.graphics.Bitmap.Config.ARGB_8888, false).sameAs(expected))
                 val activity = context.packageManager.getActivityInfo(android.content.ComponentName(context, MainActivity::class.java), 0)
                 val service = context.packageManager.getServiceInfo(android.content.ComponentName(context, ClashVpnService::class.java), 0)
                 assertEquals(R.mipmap.cheems_brand_icon, activity.icon)
