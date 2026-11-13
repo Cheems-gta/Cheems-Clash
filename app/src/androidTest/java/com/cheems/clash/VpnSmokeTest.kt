@@ -55,6 +55,22 @@ class VpnSmokeTest {
                 val service = context.packageManager.getServiceInfo(android.content.ComponentName(context, ClashVpnService::class.java), 0)
                 assertEquals(R.mipmap.cheems_brand_icon, activity.icon)
                 assertEquals(R.mipmap.cheems_brand_icon, service.icon)
+                @Suppress("DEPRECATION")
+                val postedApp = posted.extras.getParcelable<android.content.pm.ApplicationInfo>("android.appInfo")
+                android.util.Log.i("CheemsIconAudit", "contextIcon=" + context.applicationInfo.icon +
+                    " postedIcon=" + postedApp?.icon + " smallIcon=" + posted.smallIcon +
+                    " postedPackage=" + postedApp?.packageName +
+                    " source=" + postedApp?.sourceDir)
+                assertNotNull("Notification must carry application identity", postedApp)
+                assertEquals(context.packageName, postedApp!!.packageName)
+                assertEquals(R.mipmap.cheems_brand_icon, postedApp.icon)
+                instrumentation.uiAutomation.executeShellCommand("cmd statusbar expand-notifications").close()
+                Thread.sleep(1500)
+                val screenshot = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
+                File(context.filesDir, "audit-notification.png").outputStream().use {
+                    screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                }
+                instrumentation.uiAutomation.executeShellCommand("cmd statusbar collapse").close()
                 assertTrue(Core.proxies().contains("TEST"))
                 Core.select("TEST","REJECT")
                 assertTrue(Core.proxies().contains("REJECT"))

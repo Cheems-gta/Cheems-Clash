@@ -1,11 +1,11 @@
-name: Android APK
+name: Notification icon audit
 on:
   push:
-    branches: [main]
+    branches: [diagnostics/notification-icon-audit]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -76,12 +76,6 @@ jobs:
           sha256sum app/build/outputs/apk/debug/app-debug.apk
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose app/build/outputs/apk/debug/app-debug.apk
           unzip -l app/build/outputs/apk/debug/app-debug.apk | grep libgojni.so
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Cheems-Clash-v0.2-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
       - name: Enable KVM for Android test
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -104,14 +98,20 @@ jobs:
             adb shell pm grant com.cheems.clash android.permission.POST_NOTIFICATIONS
             adb shell am start -n com.cheems.clash/.MainActivity
             adb shell am instrument -w com.cheems.clash.test/androidx.test.runner.AndroidJUnitRunner | tee instrumentation.txt
+            mkdir -p audit
+            adb exec-out run-as com.cheems.clash cat files/audit-notification.png > audit/notification.png
+            adb shell dumpsys notification --noredact > audit/notification-state.txt
+            adb shell dumpsys package com.cheems.clash > audit/package-state.txt
+            adb logcat -d -s CheemsIconAudit:I '*:S' > audit/icon-identity.txt
+            cp instrumentation.txt audit/
+            "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging app/build/outputs/apk/debug/app-debug.apk > audit/apk-badging.txt
             grep -q 'OK (1 test)' instrumentation.txt
-      - name: Publish preview release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag="v0.2-beta-${GITHUB_RUN_NUMBER}"
-          gh release create "$tag" app/build/outputs/apk/debug/app-debug.apk \
-            --title "Cheems Clash v0.2 Beta #${GITHUB_RUN_NUMBER}" \
-            --notes "Mihomo v1.19.34 integration: VPN, YAML and HTTPS subscription import, selectors and traffic. arm64 and x86_64. Beta; use your own configuration." \
-            --prerelease \
-            --target "$GITHUB_SHA"
+      - name: Upload audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: notification-icon-audit
+          path: |
+            audit/
+            instrumentation.txt
+          if-no-files-found: warn
