@@ -87,6 +87,7 @@ fun CheemsApp() {
     val busy by VpnState.busy.collectAsState()
     val status by VpnState.status.collectAsState()
     val error by VpnState.error.collectAsState()
+    val startupMetrics by VpnState.startupMetrics.collectAsState()
     var hasProfile by remember { mutableStateOf(File(context.filesDir,"profile.yaml").isFile) }
     var importing by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
@@ -192,7 +193,7 @@ fun CheemsApp() {
                     }
                     else -> PanelCard {
                         Text("Cheems Clash",color=Green,fontSize=21.sp,fontWeight=FontWeight.Bold)
-                        Spacer(Modifier.height(12.dp)); Text("版本 0.2.5 · ${Core.version()}\n支持 arm64 / x86_64\nIPv4 VPN；IPv6 在 VPN 连接期间阻断。\n本应用自身流量不进入 VPN。",color=Color.White)
+                        Spacer(Modifier.height(12.dp)); Text("版本 0.2.7 · ${Core.version()}\n支持 arm64 / x86_64\nIPv4 VPN；IPv6 在 VPN 连接期间阻断。\n本应用自身流量不进入 VPN。",color=Color.White)
                         Spacer(Modifier.height(12.dp)); Text("Mihomo 采用 GPL-3.0 许可证。源码与构建脚本：github.com/Cheems-gta/Cheems-Clash",color=Color.LightGray,fontSize=12.sp)
                     }
                 }
