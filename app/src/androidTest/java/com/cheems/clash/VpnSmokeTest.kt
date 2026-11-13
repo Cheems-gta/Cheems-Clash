@@ -39,7 +39,7 @@ class VpnSmokeTest {
                 awaitState { VpnState.running.value && !VpnState.busy.value }
                 val notifications = context.getSystemService(android.app.NotificationManager::class.java)
                 val posted = notifications.activeNotifications.single { it.id == 2 }.notification
-                assertEquals(android.graphics.drawable.Icon.TYPE_BITMAP, posted.smallIcon.type)
+                assertEquals(R.drawable.ic_stat_cheems, posted.smallIcon.resId)
                 assertNotNull("Cheems large icon must be set", posted.getLargeIcon())
                 assertEquals(android.graphics.drawable.Icon.TYPE_BITMAP, posted.getLargeIcon().type)
                 for (icon in listOf(posted.smallIcon, posted.getLargeIcon())) {
@@ -51,10 +51,17 @@ class VpnSmokeTest {
                         pixels.any { android.graphics.Color.alpha(it) > 0 })
                 }
                 assertFalse("Legacy notification must be removed", notifications.activeNotifications.any { it.id == 1 })
-                assertTrue(posted.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString().contains("v0.2.6"))
+                assertTrue(posted.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString().contains("v0.2.7"))
                 val appIcon = context.packageManager.getApplicationIcon(context.packageName)
-                assertTrue("Application must load its adaptive icon", appIcon is android.graphics.drawable.AdaptiveIconDrawable)
-                assertEquals(R.mipmap.cheems_app_icon, context.applicationInfo.icon)
+                assertTrue("Application identity must load a flat bitmap", appIcon is android.graphics.drawable.BitmapDrawable)
+                assertEquals(R.mipmap.cheems_brand_icon, context.applicationInfo.icon)
+                val expected = android.graphics.BitmapFactory.decodeResource(context.resources, R.mipmap.cheems_brand_icon)
+                assertTrue("Application icon pixels must match Cheems artwork",
+                    (appIcon as android.graphics.drawable.BitmapDrawable).bitmap.sameAs(expected))
+                val activity = context.packageManager.getActivityInfo(android.content.ComponentName(context, MainActivity::class.java), 0)
+                val service = context.packageManager.getServiceInfo(android.content.ComponentName(context, ClashVpnService::class.java), 0)
+                assertEquals(R.mipmap.cheems_brand_icon, activity.icon)
+                assertEquals(R.mipmap.cheems_brand_icon, service.icon)
                 assertTrue(Core.proxies().contains("TEST"))
                 Core.select("TEST","REJECT")
                 assertTrue(Core.proxies().contains("REJECT"))
