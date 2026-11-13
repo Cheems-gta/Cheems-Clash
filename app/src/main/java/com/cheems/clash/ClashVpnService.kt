@@ -25,7 +25,7 @@ class ClashVpnService : VpnService() {
         override fun protect(fd: Long): Boolean = this@ClashVpnService.protect(fd.toInt())
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == "STOP") { cancelled = true; stopSelf(); return START_NOT_STICKY }
+        if (intent?.action == "STOP") { requestStop(); return START_NOT_STICKY }
         if (VpnState.busy.value || VpnState.running.value) return START_NOT_STICKY
         cancelled = false
         VpnState.busy.value = true
@@ -62,12 +62,24 @@ class ClashVpnService : VpnService() {
         }
         return START_NOT_STICKY
     }
+    private fun requestStop() {
+        cancelled = true
+        VpnState.busy.value = true
+        VpnState.status.value = "正在断开…"
+        worker.execute {
+            cleanup()
+            VpnState.status.value = "尚未连接"
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            VpnState.busy.value = false
+        }
+    }
     private fun cleanup() {
         runCatching { Core.stop() }
         runCatching { device?.close() }; device = null
         VpnState.running.value = false
     }
-    override fun onRevoke() { cancelled = true; stopSelf(); super.onRevoke() }
+    override fun onRevoke() { requestStop(); super.onRevoke() }
     override fun onDestroy() {
         cancelled = true
         VpnState.busy.value = true

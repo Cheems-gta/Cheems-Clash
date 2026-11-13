@@ -18,7 +18,7 @@ class VpnSmokeTest {
     private fun awaitState(check: () -> Boolean) {
         val deadline=System.currentTimeMillis()+45000
         while(!check() && System.currentTimeMillis()<deadline) Thread.sleep(200)
-        assertTrue("VPN state=${VpnState.status.value}, error=${VpnState.error.value}",check())
+        assertTrue("VPN state=${VpnState.status.value}, running=${VpnState.running.value}, busy=${VpnState.busy.value}, error=${VpnState.error.value}",check())
     }
     @Test
     fun testStartSelectStopRestart() {
