@@ -105,13 +105,18 @@ jobs:
             adb shell am start -n com.cheems.clash/.MainActivity
             adb shell am instrument -w com.cheems.clash.test/androidx.test.runner.AndroidJUnitRunner | tee instrumentation.txt
             grep -q 'OK (1 test)' instrumentation.txt
-      - name: Publish preview release
+      - name: Publish single rolling beta release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="v0.2-beta-${GITHUB_RUN_NUMBER}"
-          gh release create "$tag" app/build/outputs/apk/debug/app-debug.apk \
-            --title "Cheems Clash v0.2 Beta #${GITHUB_RUN_NUMBER}" \
-            --notes "Mihomo v1.19.34 integration: VPN, YAML and HTTPS subscription import, selectors and traffic. arm64 and x86_64. Beta; use your own configuration." \
-            --prerelease \
-            --target "$GITHUB_SHA"
+          tag="cheems-beta"
+          apk="app/build/outputs/apk/debug/app-debug.apk"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$apk" --clobber
+            gh release edit "$tag" --title "Cheems Clash Beta (Latest)" --notes "Latest successfully tested Android beta APK. Build: ${GITHUB_RUN_NUMBER}; commit: ${GITHUB_SHA}. Mihomo v1.19.34. Beta; use your own configuration." --prerelease
+          else
+            gh release create "$tag" "$apk" \
+              --title "Cheems Clash Beta (Latest)" \
+              --notes "Latest successfully tested Android beta APK. Build: ${GITHUB_RUN_NUMBER}; commit: ${GITHUB_SHA}. Mihomo v1.19.34. Beta; use your own configuration." \
+              --prerelease --target "$GITHUB_SHA"
+          fi
