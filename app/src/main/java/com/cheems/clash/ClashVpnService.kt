@@ -10,6 +10,8 @@ import core.Protector
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import org.json.JSONObject
 
 object VpnState {
     val status = MutableStateFlow("尚未连接")
@@ -55,6 +57,9 @@ object VpnDiagnostics {
 
 class ClashVpnService : VpnService() {
     private val worker = Executors.newSingleThreadExecutor()
+    private val monitor = Executors.newSingleThreadScheduledExecutor()
+    private var monitorFailures = 0
+    private val nodeCooldown = mutableMapOf<String, Long>()
     private var device: ParcelFileDescriptor? = null
     @Volatile private var cancelled = false
     private val protector = object : Protector {
@@ -100,6 +105,7 @@ class ClashVpnService : VpnService() {
                 VpnState.running.value = true
                 VpnState.status.value = "已连接"
                 VpnDiagnostics.record(this, "VPN 启动成功：${readyAt - startupAt} ms")
+                monitor.scheduleWithFixedDelay({ checkNodeHealth() }, 15, 15, TimeUnit.SECONDS)
             } catch (e: Exception) {
                 VpnState.error.value = e.message ?: "内核启动失败"
                 VpnDiagnostics.record(this, "VPN 启动失败：${e.javaClass.simpleName}")
@@ -110,8 +116,54 @@ class ClashVpnService : VpnService() {
         }
         return START_NOT_STICKY
     }
+    private fun checkNodeHealth() {
+        if (cancelled || !VpnState.running.value || VpnState.busy.value) return
+        try {
+            val proxies = JSONObject(Core.proxies())
+            val groups = proxies.keys().asSequence().toList().sorted()
+            // Only a manually selected selector can be switched without rebuilding the VPN.
+            val groupName = groups.firstOrNull { name ->
+                val p = proxies.optJSONObject(name)
+                p?.optString("type") == "Selector" && p.optJSONArray("all") != null
+                    && p.optString("now") !in listOf("DIRECT", "REJECT", "")
+            } ?: return
+            val group = proxies.getJSONObject(groupName)
+            val current = group.optString("now")
+            val healthy = runCatching { Core.delay(current) }.getOrNull()?.let { it > 0 } == true
+            if (healthy) { monitorFailures = 0; return }
+            monitorFailures++
+            if (monitorFailures < 3) return
+            monitorFailures = 0
+            val now = SystemClock.elapsedRealtime()
+            val candidates = group.getJSONArray("all")
+            val options = (0 until candidates.length()).map { candidates.optString(it) }
+                .filter { it.isNotBlank() && it != current && it !in listOf("DIRECT","REJECT","GLOBAL")
+                    && (nodeCooldown[it] ?: 0L) <= now }
+                .take(12)
+            val ranked = options.mapNotNull { node ->
+                if (cancelled || !VpnState.running.value) return
+                val delay = runCatching { Core.delay(node) }.getOrNull()
+                if (delay != null && delay > 0) node to delay
+                else { nodeCooldown[node] = now + 120_000L; null }
+            }.sortedBy { it.second }
+            val best = ranked.firstOrNull()
+            if (best == null) {
+                VpnDiagnostics.record(this, "故障转移：没有检测到可用的备用节点")
+                return
+            }
+            if (cancelled || !VpnState.running.value) return
+            val switched = runCatching { Core.select(groupName,best.first) }.isSuccess
+            if (switched) {
+                nodeCooldown[current] = now + 120_000L
+                VpnDiagnostics.record(this, "故障转移：$groupName 已切换至 ${best.first}（${best.second} ms）")
+            } else VpnDiagnostics.record(this, "故障转移：切换失败")
+        } catch (e: Exception) {
+            android.util.Log.w("CheemsFailover", "Health check failed", e)
+        }
+    }
     private fun requestStop() {
         VpnDiagnostics.record(this, "收到断开请求")
+        monitor.shutdownNow()
         cancelled = true
         VpnState.busy.value = true
         VpnState.status.value = "正在断开…"
@@ -131,6 +183,7 @@ class ClashVpnService : VpnService() {
     override fun onRevoke() { VpnDiagnostics.record(this, "VPN 授权被系统撤销"); requestStop(); super.onRevoke() }
     override fun onDestroy() {
         VpnDiagnostics.record(this, "VPN 服务 onDestroy")
+        monitor.shutdownNow()
         cancelled = true
         VpnState.busy.value = true
         worker.execute {
