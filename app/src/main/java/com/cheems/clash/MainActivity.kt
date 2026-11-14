@@ -49,7 +49,24 @@ private fun saveProfile(dir: File, bytes: ByteArray) {
     temp.writeBytes(bytes)
     check(temp.renameTo(File(dir,"profile.yaml"))) { "保存配置失败" }
 }
-private fun downloadProfile(link: String): ByteArray {
+private data class SubscriptionDownload(val bytes: ByteArray, val usage: String?)
+private fun parseUsage(header: String?): String? {
+    if (header.isNullOrBlank()) return null
+    val values = header.split(';').mapNotNull { entry ->
+        val pair = entry.trim().split('=', limit = 2)
+        if (pair.size != 2) null else pair[1].trim().toLongOrNull()?.let { pair[0].trim().lowercase(Locale.US) to it }
+    }.toMap()
+    val uploaded = values["upload"] ?: return null
+    val downloaded = values["download"] ?: return null
+    val total = values["total"] ?: return null
+    fun gb(bytes: Long) = String.format(Locale.US, "%.2f GB", bytes / 1073741824.0)
+    val used = uploaded + downloaded
+    val expiry = values["expire"]?.takeIf { it > 0 }?.let {
+        java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(java.util.Date(it * 1000))
+    } ?: "未提供"
+    return "已用 ${gb(used)} · 剩余 ${gb((total-used).coerceAtLeast(0))}\n总量 ${gb(total)} · 到期 $expiry"
+}
+private fun downloadProfile(link: String): SubscriptionDownload {
     var url = URL(link.trim())
     repeat(6) {
         require(url.protocol == "https") { "订阅链接及跳转地址必须使用 HTTPS" }
@@ -61,7 +78,7 @@ private fun downloadProfile(link: String): ByteArray {
             if (code in 300..399) { url=URL(url,conn.getHeaderField("Location") ?: error("订阅跳转缺少地址")) }
             else {
                 require(code in 200..299) { "订阅服务器返回 HTTP $code" }
-                return conn.inputStream.use { it.readBytesLimited() }
+                return SubscriptionDownload(conn.inputStream.use { it.readBytesLimited() }, parseUsage(conn.getHeaderField("subscription-userinfo")))
             }
         } finally { conn.disconnect() }
     }
@@ -90,6 +107,7 @@ fun CheemsApp() {
     val startupMetrics by VpnState.startupMetrics.collectAsState()
     var hasProfile by remember { mutableStateOf(File(context.filesDir,"profile.yaml").isFile) }
     var importing by remember { mutableStateOf(false) }
+    var subscriptionUsage by remember { mutableStateOf(context.getSharedPreferences("profile",0).getString("usage",null)) }
     var message by remember { mutableStateOf("") }
     var url by remember { mutableStateOf(context.getSharedPreferences("profile",0).getString("url","") ?: "") }
     var up by remember { mutableLongStateOf(0) }; var down by remember { mutableLongStateOf(0) }
@@ -179,18 +197,22 @@ fun CheemsApp() {
                         Spacer(Modifier.height(12.dp)); Text(if(hasProfile) "已保存一份配置" else "尚未导入配置",color=Color.White)
                         Text("支持 Clash/Mihomo YAML；更换配置前请先断开。",color=Color.LightGray,fontSize=12.sp)
                         Spacer(Modifier.height(12.dp))
+                        Text("套餐流量",color=Green,fontWeight=FontWeight.Bold)
+                        Text(subscriptionUsage ?: "服务商未提供流量信息",color=Color.White,fontSize=13.sp)
+                        Spacer(Modifier.height(12.dp))
                         Button(onClick={openFile.launch(arrayOf("*/*"))},enabled=!running&&!busy&&!importing,modifier=Modifier.fillMaxWidth()) { Text("导入本地 YAML") }
                         Spacer(Modifier.height(12.dp))
                         OutlinedTextField(value=url,onValueChange={url=it},label={Text("HTTPS 订阅链接")},singleLine=true,enabled=!running&&!busy&&!importing,modifier=Modifier.fillMaxWidth())
                         Button(onClick={scope.launch {
                             importing=true; message="正在下载订阅…"
                             try {
-                                withContext(Dispatchers.IO) { saveProfile(context.filesDir,downloadProfile(url)) }
-                                context.getSharedPreferences("profile",0).edit().putString("url",url.trim()).apply()
+                                val result=withContext(Dispatchers.IO) { downloadProfile(url).also { saveProfile(context.filesDir,it.bytes) } }
+                                subscriptionUsage=result.usage
+                                context.getSharedPreferences("profile",0).edit().putString("url",url.trim()).putString("usage",subscriptionUsage).apply()
                                 hasProfile=true; message="订阅已更新，可以连接"
                             } catch(e:Exception) { message=e.message ?: "订阅下载失败" }
                             finally { importing=false }
-                        }},enabled=!running&&!busy&&!importing&&url.isNotBlank(),modifier=Modifier.fillMaxWidth()) { Text(if(importing) "正在导入…" else "下载 / 更新订阅") }
+                        }},enabled=!running&&!busy&&!importing&&url.isNotBlank(),modifier=Modifier.fillMaxWidth()) { Text(if(importing) "正在导入…" else "更新节点 / 订阅") }
                     }
                     else -> PanelCard {
                         Text("Cheems Clash",color=Green,fontSize=21.sp,fontWeight=FontWeight.Bold)
