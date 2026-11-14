@@ -35,7 +35,7 @@ private val Panel = Color(0xFF1B252B)
 private const val MaxConfig = 4 * 1024 * 1024
 
 class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); setContent { CheemsApp() } }
+    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); runCatching { VpnDiagnostics.inspectPreviousExit(this) }; setContent { CheemsApp() } }
 }
 
 private fun saveProfile(dir: File, bytes: ByteArray) {
@@ -96,6 +96,7 @@ fun CheemsApp() {
     var proxies by remember { mutableStateOf(JSONObject()) }
     var group by remember { mutableStateOf<String?>(null) }
     var delayMessage by remember { mutableStateOf("") }
+    var diagnosticLog by remember { mutableStateOf(VpnDiagnostics.history(context)) }
     fun start() { context.startForegroundService(Intent(context,ClashVpnService::class.java)) }
     val vpnPermission=rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         if(it.resultCode==Activity.RESULT_OK) start() else message="未授权 VPN，连接未启动"
@@ -194,6 +195,12 @@ fun CheemsApp() {
                     else -> PanelCard {
                         Text("Cheems Clash",color=Green,fontSize=21.sp,fontWeight=FontWeight.Bold)
                         Spacer(Modifier.height(12.dp)); Text("版本 0.2.7 · ${Core.version()}\n支持 arm64 / x86_64\nIPv4 VPN；IPv6 在 VPN 连接期间阻断。\n本应用自身流量不进入 VPN。",color=Color.White)
+                        Spacer(Modifier.height(18.dp))
+                        Text("VPN 稳定性诊断",color=Green,fontSize=18.sp,fontWeight=FontWeight.Bold)
+                        Spacer(Modifier.height(8.dp))
+                        Text("记录最近 35 条服务事件及系统提供的进程退出原因；不记录订阅地址或节点密钥。",color=Color.LightGray,fontSize=12.sp)
+                        TextButton(onClick={diagnosticLog=VpnDiagnostics.history(context)}) { Text("刷新诊断记录") }
+                        Text(if(diagnosticLog.isBlank()) "暂无诊断记录" else diagnosticLog,color=Color.White,fontSize=12.sp)
                         Spacer(Modifier.height(12.dp)); Text("Mihomo 采用 GPL-3.0 许可证。源码与构建脚本：github.com/Cheems-gta/Cheems-Clash",color=Color.LightGray,fontSize=12.sp)
                     }
                 }
