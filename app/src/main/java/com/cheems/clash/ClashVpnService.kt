@@ -19,6 +19,40 @@ object VpnState {
     val startupMetrics = MutableStateFlow("尚无连接耗时数据")
 }
 
+object VpnDiagnostics {
+    private const val KEY = "events"
+    fun record(context: android.content.Context, event: String) {
+        val prefs = context.getSharedPreferences("vpn_diagnostics", 0)
+        val timestamp = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+        val old = prefs.getString(KEY, "") ?: ""
+        val lines = (old.lines().filter { it.isNotBlank() } + "$timestamp  $event").takeLast(35)
+        prefs.edit().putString(KEY, lines.joinToString("\n")).apply()
+    }
+    fun history(context: android.content.Context): String =
+        context.getSharedPreferences("vpn_diagnostics", 0).getString(KEY, "") ?: ""
+    fun inspectPreviousExit(context: android.content.Context) {
+        if (android.os.Build.VERSION.SDK_INT < 30) return
+        val prefs = context.getSharedPreferences("vpn_diagnostics", 0)
+        val manager = context.getSystemService(android.app.ActivityManager::class.java)
+        val last = manager.getHistoricalProcessExitReasons(context.packageName, 0, 5)
+            .firstOrNull() ?: return
+        val key = "${last.timestamp}:${last.reason}"
+        if (prefs.getString("last_exit", "") == key) return
+        prefs.edit().putString("last_exit", key).apply()
+        val reason = when (last.reason) {
+            android.app.ApplicationExitInfo.REASON_CRASH -> "Java 异常"
+            android.app.ApplicationExitInfo.REASON_CRASH_NATIVE -> "原生内核崩溃"
+            android.app.ApplicationExitInfo.REASON_LOW_MEMORY -> "系统内存不足"
+            android.app.ApplicationExitInfo.REASON_USER_REQUESTED -> "用户或系统请求结束"
+            android.app.ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "资源占用过高"
+            android.app.ApplicationExitInfo.REASON_ANR -> "应用无响应"
+            android.app.ApplicationExitInfo.REASON_SIGNALED -> "进程收到终止信号"
+            else -> "系统原因代码 ${last.reason}"
+        }
+        record(context, "上次进程退出：$reason")
+    }
+}
+
 class ClashVpnService : VpnService() {
     private val worker = Executors.newSingleThreadExecutor()
     private var device: ParcelFileDescriptor? = null
@@ -30,6 +64,7 @@ class ClashVpnService : VpnService() {
         if (intent?.action == "STOP") { requestStop(); return START_NOT_STICKY }
         if (VpnState.busy.value || VpnState.running.value) return START_NOT_STICKY
         cancelled = false
+        VpnDiagnostics.record(this, "收到 VPN 启动请求")
         val startupAt = SystemClock.elapsedRealtime()
         VpnState.busy.value = true
         VpnState.error.value = ""
@@ -64,8 +99,10 @@ class ClashVpnService : VpnService() {
                 android.util.Log.i("CheemsStartup", VpnState.startupMetrics.value)
                 VpnState.running.value = true
                 VpnState.status.value = "已连接"
+                VpnDiagnostics.record(this, "VPN 启动成功：${readyAt - startupAt} ms")
             } catch (e: Exception) {
                 VpnState.error.value = e.message ?: "内核启动失败"
+                VpnDiagnostics.record(this, "VPN 启动失败：${e.javaClass.simpleName}")
                 VpnState.status.value = "连接失败"
                 cleanup()
                 stopSelf()
@@ -74,6 +111,7 @@ class ClashVpnService : VpnService() {
         return START_NOT_STICKY
     }
     private fun requestStop() {
+        VpnDiagnostics.record(this, "收到断开请求")
         cancelled = true
         VpnState.busy.value = true
         VpnState.status.value = "正在断开…"
@@ -90,8 +128,9 @@ class ClashVpnService : VpnService() {
         runCatching { device?.close() }; device = null
         VpnState.running.value = false
     }
-    override fun onRevoke() { requestStop(); super.onRevoke() }
+    override fun onRevoke() { VpnDiagnostics.record(this, "VPN 授权被系统撤销"); requestStop(); super.onRevoke() }
     override fun onDestroy() {
+        VpnDiagnostics.record(this, "VPN 服务 onDestroy")
         cancelled = true
         VpnState.busy.value = true
         worker.execute {
