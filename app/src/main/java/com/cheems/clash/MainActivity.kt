@@ -108,6 +108,8 @@ fun CheemsApp() {
     var hasProfile by remember { mutableStateOf(File(context.filesDir,"profile.yaml").isFile) }
     var importing by remember { mutableStateOf(false) }
     var subscriptionUsage by remember { mutableStateOf(context.getSharedPreferences("profile",0).getString("usage",null)) }
+    var refreshMinutes by remember { mutableStateOf(context.getSharedPreferences("profile",0).getInt("refresh_minutes",60).toString()) }
+    var autoRefresh by remember { mutableStateOf(context.getSharedPreferences("profile",0).getBoolean("auto_refresh",true)) }
     var message by remember { mutableStateOf("") }
     var url by remember { mutableStateOf(context.getSharedPreferences("profile",0).getString("url","") ?: "") }
     var up by remember { mutableLongStateOf(0) }; var down by remember { mutableLongStateOf(0) }
@@ -127,6 +129,27 @@ fun CheemsApp() {
             try { withContext(Dispatchers.IO) { context.contentResolver.openInputStream(uri)!!.use { saveProfile(context.filesDir,it.readBytesLimited()) } }; hasProfile=true; message="配置已导入，可以连接" }
             catch(e:Exception) { message=e.message ?: "导入失败" }
             finally { importing=false }
+        }
+    }
+    LaunchedEffect(autoRefresh,refreshMinutes,running,busy,url,importing) {
+        val minutes=refreshMinutes.toLongOrNull()
+        if(!autoRefresh || minutes==null || minutes<5 || url.isBlank() || running || busy || importing) return@LaunchedEffect
+        while(true) {
+            delay(60_000L)
+            val prefs=context.getSharedPreferences("profile",0)
+            val last=prefs.getLong("last_refresh",0L)
+            if(System.currentTimeMillis()-last < minutes*60_000L) continue
+            prefs.edit().putLong("last_refresh",System.currentTimeMillis()).apply()
+            importing=true
+            try {
+                val result=withContext(Dispatchers.IO) { downloadProfile(url).also { saveProfile(context.filesDir,it.bytes) } }
+                subscriptionUsage=result.usage
+                prefs.edit().putString("url",url.trim()).putString("usage",result.usage).apply()
+                hasProfile=true
+                message="订阅已自动更新"
+            } catch(e:Exception) {
+                message="自动更新失败，已保留旧配置：${e.message}"
+            } finally { importing=false }
         }
     }
     LaunchedEffect(running) {
@@ -203,12 +226,30 @@ fun CheemsApp() {
                         Button(onClick={openFile.launch(arrayOf("*/*"))},enabled=!running&&!busy&&!importing,modifier=Modifier.fillMaxWidth()) { Text("导入本地 YAML") }
                         Spacer(Modifier.height(12.dp))
                         OutlinedTextField(value=url,onValueChange={url=it},label={Text("HTTPS 订阅链接")},singleLine=true,enabled=!running&&!busy&&!importing,modifier=Modifier.fillMaxWidth())
+                        Spacer(Modifier.height(12.dp))
+                        Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
+                            Text("自动更新订阅",color=Color.White,modifier=Modifier.weight(1f))
+                            Switch(checked=autoRefresh,onCheckedChange={
+                                autoRefresh=it
+                                context.getSharedPreferences("profile",0).edit().putBoolean("auto_refresh",it).apply()
+                            })
+                        }
+                        OutlinedTextField(value=refreshMinutes,onValueChange={input ->
+                            if(input.length<=5 && input.all { it.isDigit() }) {
+                                refreshMinutes=input
+                                input.toIntOrNull()?.takeIf { it in 5..10080 }?.let { valid ->
+                                    context.getSharedPreferences("profile",0).edit().putInt("refresh_minutes",valid).apply()
+                                }
+                            }
+                        },label={Text("更新间隔（分钟，5～10080）")},singleLine=true,enabled=autoRefresh,modifier=Modifier.fillMaxWidth())
+                        Text("为避免断开正在使用的 VPN，连接期间暂缓更新；断开后恢复定时检查。",color=Color.LightGray,fontSize=12.sp)
                         Button(onClick={scope.launch {
                             importing=true; message="正在下载订阅…"
                             try {
                                 val result=withContext(Dispatchers.IO) { downloadProfile(url).also { saveProfile(context.filesDir,it.bytes) } }
                                 subscriptionUsage=result.usage
                                 context.getSharedPreferences("profile",0).edit().putString("url",url.trim()).putString("usage",subscriptionUsage).apply()
+                                context.getSharedPreferences("profile",0).edit().putLong("last_refresh",System.currentTimeMillis()).apply()
                                 hasProfile=true; message="订阅已更新，可以连接"
                             } catch(e:Exception) { message=e.message ?: "订阅下载失败" }
                             finally { importing=false }
