@@ -27,7 +27,7 @@ public final class Node {
     uuid = value(m, "uuid", "");
     username = value(m, "username", "");
     cipher = value(m, "cipher", "").toLowerCase(Locale.ROOT);
-    sni = value(m, "sni", value(m, "servername", host));
+    sni = firstNonBlank(value(m, "sni", ""), value(m, "servername", ""), value(m, "peer", ""), host);
     String reason = "";
     if (host.isEmpty() || port < 1 || port > 65535) reason = "地址或端口无效";
     else if ((type.equals("hysteria2") || type.equals("anytls")) && password.isEmpty()) reason = type.toUpperCase(Locale.ROOT) + " 缺少认证密码";
@@ -217,6 +217,11 @@ public final class Node {
     if (expected == 0 || password.isEmpty()) return false;
     try { return Base64.getDecoder().decode(password).length == expected; }
     catch (IllegalArgumentException e) { return false; }
+  }
+
+  private static String firstNonBlank(String... values) {
+    for (String value : values) if (value != null && !value.trim().isEmpty()) return value.trim();
+    return "";
   }
 
   public static String value(Map<?, ?> m, String key, String fallback) {
