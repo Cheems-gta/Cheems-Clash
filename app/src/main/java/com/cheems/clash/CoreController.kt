@@ -24,6 +24,8 @@ object CoreController {
     val upload = MutableStateFlow(0L)
     val download = MutableStateFlow(0L)
     val connections = MutableStateFlow(0L)
+    private var operation = false
+    private var watcher: Job? = null
     fun key(node: Node): String = MessageDigest.getInstance("SHA-256")
         .digest("${node.name}\u0000${node.type}\u0000${node.host}\u0000${node.port}".toByteArray())
         .joinToString("") { "%02x".format(it) }
