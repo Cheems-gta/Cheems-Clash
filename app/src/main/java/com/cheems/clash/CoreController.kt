@@ -37,7 +37,7 @@ object CoreController {
     suspend fun reload(context: Context) {
         val imported = withContext(Dispatchers.IO) {
             val file = File(context.filesDir, "profile.yaml")
-            if (file.isFile) Subscription.parse(file.readText()).map { it.withoutCertificateChecks() } else emptyList()
+            if (file.isFile) Subscription.parse(file.readText()) else emptyList()
         }
         nodes.value = imported
         val previous = context.getSharedPreferences("profile", 0).getString("selected_core", "")
@@ -91,7 +91,7 @@ object CoreController {
                 CoreService.lastFailure = null
                 CoreService.connecting = true
                 context.startForegroundService(Intent(context, CoreService::class.java)
-                    .putExtra("hy2.allowUnverifiedTls", true))
+                    .putExtra("hy2.allowUnverifiedTls", false))
             } catch (e: Exception) {
                 CoreService.connecting = false
                 CoreService.lastFailure = "无法启动 VPN：${e.javaClass.simpleName}"
