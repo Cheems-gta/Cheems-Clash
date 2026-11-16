@@ -16,8 +16,8 @@ import java.io.File
 class VpnSmokeTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private fun awaitState(check: () -> Boolean) {
-        val deadline = System.currentTimeMillis()+60000
-        while (!check() && System.currentTimeMillis()<deadline) Thread.sleep(150)
+        val deadline = android.os.SystemClock.elapsedRealtime()+60000
+        while (!check() && android.os.SystemClock.elapsedRealtime()<deadline) Thread.sleep(150)
         assertTrue("Core state: selected=${CoreController.selected.value} serviceSelected=${CoreService.selected?.name} tunnel=${CoreService.tunnelEstablished} connecting=${CoreService.connecting} serviceAlive=${CoreService.serviceAlive} lastFailure=${CoreService.lastFailure}\n${CoreService.logs()}", check())
     }
     @Test fun testSingleCoreStartSwitchStopRestart() {
@@ -50,7 +50,11 @@ class VpnSmokeTest {
                 val notification = context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.single { it.id==1 }.notification
                 assertEquals(R.drawable.ic_notification, notification.smallIcon.resId)
                 assertEquals(R.mipmap.cheems_brand_icon, context.applicationInfo.icon)
-                val next = CoreController.nodes.value.last()
+                // Always change to the OTHER node. Selecting an already-selected
+                // node can momentarily satisfy readiness before the restart begins.
+                val currentKey = CoreController.selected.value
+                val next = CoreController.nodes.value.first { CoreController.key(it) != currentKey }
+                assertNotEquals("Switch test must change endpoints", currentKey, CoreController.key(next))
                 instrumentation.runOnMainSync { CoreController.select(context, next) }
                 awaitState { CoreController.selected.value==CoreController.key(next) && CoreService.selected?.name==next.name && CoreService.tunnelEstablished && !CoreService.connecting }
                 probe()
