@@ -116,7 +116,7 @@ jobs:
           mkdir -p dist
           cp app/build/outputs/apk/debug/app-debug.apk dist/Doreena-stable-icons.apk
           tag="doreena-stable-icons-${GITHUB_SHA:0:8}"
-          apk="dist/Cheems-Clash-Cheems-Core-preview.apk"
+          apk="dist/Doreena-stable-icons.apk"
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" "$apk" --clobber
             gh release edit "$tag" --title "Doreena stable-base cosmetic preview" \
