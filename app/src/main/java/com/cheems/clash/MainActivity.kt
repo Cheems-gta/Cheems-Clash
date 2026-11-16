@@ -21,7 +21,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import core.Core
+import win.cheems.core.ClashCoreFacade
+import win.cheems.core.net.Subscription
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.io.File
@@ -32,19 +33,17 @@ import java.util.Locale
 private val Green = Color(0xFF73F5A2)
 private val Background = Color(0xFF090E13)
 private val Panel = Color(0xFF1B252B)
-private const val MaxConfig = 4 * 1024 * 1024
+private const val MaxConfig = 2 * 1024 * 1024
 
 class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); runCatching { VpnDiagnostics.inspectPreviousExit(this) }; setContent { CheemsApp() } }
+    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); runCatching { VpnDiagnostics.inspectPreviousExit(this); ClashCoreFacade.reload(this) }; setContent { CheemsApp() } }
 }
 
 private fun saveProfile(dir: File, bytes: ByteArray) {
     require(bytes.isNotEmpty() && bytes.size <= MaxConfig) { "配置为空或超过 4 MB" }
     val text = bytes.toString(Charsets.UTF_8)
     require(!text.trimStart().startsWith("<")) { "下载结果是网页，请使用 Clash/Mihomo YAML 订阅链接" }
-    require(Regex("(?m)^\\s*(proxies|proxy-providers|rules|proxy-groups)\\s*:").containsMatchIn(text)) {
-        "需要 Clash/Mihomo YAML 配置，暂不支持 Base64 节点列表"
-    }
+    require(Subscription.parse(text).any { it.supported() }) { "配置中没有独立内核支持的节点" }
     val temp = File(dir,"profile.tmp")
     temp.writeBytes(bytes)
     check(temp.renameTo(File(dir,"profile.yaml"))) { "保存配置失败" }
@@ -117,7 +116,21 @@ fun CheemsApp() {
     var group by remember { mutableStateOf<String?>(null) }
     var delayMessage by remember { mutableStateOf("") }
     var diagnosticLog by remember { mutableStateOf(VpnDiagnostics.history(context)) }
-    fun start() { context.startForegroundService(Intent(context,ClashVpnService::class.java)) }
+    var tlsCompatibility by remember { mutableStateOf(ClashCoreFacade.insecureTls(context)) }
+    var confirmTls by remember { mutableStateOf(false) }
+    fun start() {
+        runCatching { ClashCoreFacade.start(context) }
+            .onFailure { message = "连接失败：${it.message}" }
+    }
+    LaunchedEffect(Unit) {
+        while(true) {
+            VpnState.running.value = ClashCoreFacade.isRunning()
+            VpnState.busy.value = ClashCoreFacade.isConnecting()
+            VpnState.status.value = ClashCoreFacade.status()
+            VpnState.error.value = ClashCoreFacade.error()
+            delay(700)
+        }
+    }
     val vpnPermission=rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         if(it.resultCode==Activity.RESULT_OK) start() else message="未授权 VPN，连接未启动"
     }
@@ -126,7 +139,7 @@ fun CheemsApp() {
     val openFile=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if(uri!=null && !running && !busy) scope.launch {
             importing=true
-            try { withContext(Dispatchers.IO) { context.contentResolver.openInputStream(uri)!!.use { saveProfile(context.filesDir,it.readBytesLimited()) } }; hasProfile=true; message="配置已导入，可以连接" }
+            try { withContext(Dispatchers.IO) { context.contentResolver.openInputStream(uri)!!.use { saveProfile(context.filesDir,it.readBytesLimited()) }; ClashCoreFacade.reload(context) }; hasProfile=true; message="配置已导入，可以连接" }
             catch(e:Exception) { message=e.message ?: "导入失败" }
             finally { importing=false }
         }
@@ -142,7 +155,7 @@ fun CheemsApp() {
             prefs.edit().putLong("last_refresh",System.currentTimeMillis()).apply()
             importing=true
             try {
-                val result=withContext(Dispatchers.IO) { downloadProfile(url).also { saveProfile(context.filesDir,it.bytes) } }
+                val result=withContext(Dispatchers.IO) { downloadProfile(url).also { saveProfile(context.filesDir,it.bytes); ClashCoreFacade.reload(context) } }
                 subscriptionUsage=result.usage
                 prefs.edit().putString("url",url.trim()).putString("usage",result.usage).apply()
                 hasProfile=true
@@ -152,11 +165,16 @@ fun CheemsApp() {
             } finally { importing=false }
         }
     }
-    LaunchedEffect(running) {
-        up=0; down=0
-        while(running) {
-            val result=withContext(Dispatchers.IO) { runCatching { JSONObject(Core.traffic()) to JSONObject(Core.proxies()) }.getOrNull() }
-            if(result!=null) { up=result.first.optLong("up"); down=result.first.optLong("down"); proxies=result.second }
+    LaunchedEffect(running,hasProfile) {
+        if(!running) { up=0; down=0 }
+        while(true) {
+            val result=withContext(Dispatchers.IO) {
+                runCatching { JSONObject(ClashCoreFacade.traffic()) to JSONObject(ClashCoreFacade.proxies(context)) }.getOrNull()
+            }
+            if(result!=null) {
+                if(running) { up=result.first.optLong("up"); down=result.first.optLong("down") }
+                proxies=result.second
+            }
             delay(1000)
         }
     }
@@ -173,11 +191,11 @@ fun CheemsApp() {
                         PanelCard {
                             Text("连接状态",color=Color.LightGray); Spacer(Modifier.height(18.dp))
                             Text(status,color=Green,fontSize=27.sp,fontWeight=FontWeight.Bold)
-                            Spacer(Modifier.height(8.dp)); Text("Mihomo · Android VPN",color=Color.LightGray,fontSize=12.sp)
+                            Spacer(Modifier.height(8.dp)); Text("Cheems Core · Android VPN",color=Color.LightGray,fontSize=12.sp)
                             if(error.isNotEmpty()) { Spacer(Modifier.height(10.dp)); Text(error,color=Color(0xFFFFB4AB)) }
                             Spacer(Modifier.height(22.dp))
                             Button(onClick={
-                                if(running) context.startService(Intent(context,ClashVpnService::class.java).setAction("STOP"))
+                                if(running) ClashCoreFacade.stop(context)
                                 else if(!hasProfile) { tab=2; message="请先导入配置" }
                                 else {
                                     val request=VpnService.prepare(context)
@@ -193,7 +211,7 @@ fun CheemsApp() {
                         }
                     }
                     1 -> {
-                        if(!running) PanelCard { Text("连接后显示节点与策略组",color=Color.LightGray) }
+                        if(!hasProfile) PanelCard { Text("导入订阅后显示可用节点",color=Color.LightGray) }
                         else {
                             Text(delayMessage,color=Green)
                             proxies.keys().asSequence().toList().sorted().forEach { name ->
@@ -203,11 +221,8 @@ fun CheemsApp() {
                                         Text(name,color=Green,fontSize=20.sp)
                                         Text("当前：${p.optString("now")}",color=Color.White)
                                         Row {
-                                            TextButton(onClick={group=name},enabled=p.optString("type")=="Selector") { Text("切换节点") }
-                                            TextButton(onClick={ scope.launch {
-                                                delayMessage="正在测试 $name…"
-                                                delayMessage=withContext(Dispatchers.IO) { runCatching { "$name：${Core.delay(name)} ms" }.getOrElse { "测速失败：${it.message}" } }
-                                            } }) { Text("测速") }
+                                            TextButton(onClick={group=name},enabled=p.optString("type")=="Selector"&&!running&&!busy) { Text("切换节点") }
+                                            TextButton(onClick={delayMessage="当前独立内核暂不支持不中断连接的节点测速"}) { Text("测速") }
                                         }
                                     }
                                     Spacer(Modifier.height(12.dp))
@@ -218,7 +233,7 @@ fun CheemsApp() {
                     2 -> PanelCard {
                         Text("配置管理",color=Green,fontSize=21.sp,fontWeight=FontWeight.Bold)
                         Spacer(Modifier.height(12.dp)); Text(if(hasProfile) "已保存一份配置" else "尚未导入配置",color=Color.White)
-                        Text("支持 Clash/Mihomo YAML；更换配置前请先断开。",color=Color.LightGray,fontSize=12.sp)
+                        Text("支持包含 proxies 的 Clash YAML 订阅；规则组暂不移植，更换配置前请断开。",color=Color.LightGray,fontSize=12.sp)
                         Spacer(Modifier.height(12.dp))
                         Text("套餐流量",color=Green,fontWeight=FontWeight.Bold)
                         Text(subscriptionUsage ?: "服务商未提供流量信息",color=Color.White,fontSize=13.sp)
@@ -257,14 +272,24 @@ fun CheemsApp() {
                     }
                     else -> PanelCard {
                         Text("Cheems Clash",color=Green,fontSize=21.sp,fontWeight=FontWeight.Bold)
-                        Spacer(Modifier.height(12.dp)); Text("版本 0.2.7 · ${Core.version()}\n支持 arm64 / x86_64\nIPv4 VPN；IPv6 在 VPN 连接期间阻断。\n本应用自身流量不进入 VPN。",color=Color.White)
+                        Spacer(Modifier.height(12.dp)); Text("原生集成预览版 · ${ClashCoreFacade.version()}\\n支持 armv7 / arm64；原生 IPv4/IPv6 VPN。\\n该版本不再打包 Mihomo。",color=Color.White)
                         Spacer(Modifier.height(18.dp))
                         Text("VPN 稳定性诊断",color=Green,fontSize=18.sp,fontWeight=FontWeight.Bold)
                         Spacer(Modifier.height(8.dp))
                         Text("记录最近 35 条服务事件及系统提供的进程退出原因；不记录订阅地址或节点密钥。",color=Color.LightGray,fontSize=12.sp)
-                        TextButton(onClick={diagnosticLog=VpnDiagnostics.history(context)}) { Text("刷新诊断记录") }
+                        TextButton(onClick={diagnosticLog=VpnDiagnostics.history(context)+"\n"+ClashCoreFacade.diagnostics()}) { Text("刷新诊断记录") }
                         Text(if(diagnosticLog.isBlank()) "暂无诊断记录" else diagnosticLog,color=Color.White,fontSize=12.sp)
-                        Spacer(Modifier.height(12.dp)); Text("Mihomo 采用 GPL-3.0 许可证。源码与构建脚本：github.com/Cheems-gta/Cheems-Clash",color=Color.LightGray,fontSize=12.sp)
+                        Spacer(Modifier.height(12.dp))
+                        Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
+                            Text("TLS 兼容模式：跳过服务器证书验证",color=Color.White,modifier=Modifier.weight(1f))
+                            Switch(checked=tlsCompatibility,onCheckedChange={ enabled ->
+                                if(enabled) confirmTls=true
+                                else { tlsCompatibility=false; ClashCoreFacade.setInsecureTls(context,false) }
+                            },enabled=!running&&!busy)
+                        }
+                        Text("具有被冒充服务器的风险。默认仅对订阅明确标记跳过验证的节点自动应用。",color=Color.LightGray,fontSize=12.sp)
+                        Spacer(Modifier.height(12.dp))
+                        Text("独立内核源码：Cheems-Core；GPL-3.0 许可及依赖声明随 APK 提供。",color=Color.LightGray,fontSize=12.sp)
                     }
                 }
             }
@@ -273,13 +298,27 @@ fun CheemsApp() {
                 listOf("主页","节点","配置","设置").forEachIndexed { index,label -> TextButton(onClick={tab=index}) { Text(label,color=if(tab==index) Green else Color.LightGray) } }
             }
         }
+        if(confirmTls) {
+            AlertDialog(
+                onDismissRequest={confirmTls=false},
+                title={Text("高风险：跳过服务器证书验证")},
+                text={Text("仅在你信任该节点和网络时使用。连接仍有 TLS 加密，但可能无法识别冒充的服务器。此开关适用于后续连接，随时可关闭。")},
+                confirmButton={TextButton(onClick={
+                    ClashCoreFacade.setInsecureTls(context,true)
+                    tlsCompatibility=true
+                    confirmTls=false
+                }) { Text("理解风险，启用") }},
+                dismissButton={TextButton(onClick={confirmTls=false}) { Text("取消") }}
+            )
+        }
         group?.let { name ->
             AlertDialog(onDismissRequest={group=null},title={Text(name)},text={
                 Column(Modifier.heightIn(max=400.dp).verticalScroll(rememberScrollState())) {
                     val all=proxies.optJSONObject(name)?.optJSONArray("all")
                     if(all!=null) for(i in 0 until all.length()) { val node=all.getString(i)
                         TextButton(onClick={scope.launch {
-                            val result=withContext(Dispatchers.IO) { runCatching { Core.select(name,node) } }
+                            val result=withContext(Dispatchers.IO) { runCatching { ClashCoreFacade.select(context,node) } }
+                            if(result.isSuccess) proxies=runCatching { JSONObject(ClashCoreFacade.proxies(context)) }.getOrDefault(JSONObject())
                             message=if(result.isSuccess) "已切换至 $node" else "切换失败：${result.exceptionOrNull()?.message}"
                             group=null
                         }}) { Text(node) }
