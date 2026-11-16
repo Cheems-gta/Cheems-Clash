@@ -146,6 +146,36 @@ public final class CoreService extends VpnService {
   public void onCreate() {
     super.onCreate();
     prepareRuntimeSession();
+    // Android records native crashes even when Java cannot catch the signal.
+    // Record only the exit reason and timestamp; never persist a tombstone
+    // containing potentially sensitive node or network information.
+    if (android.os.Build.VERSION.SDK_INT >= 30) {
+      try {
+        android.app.ActivityManager manager = getSystemService(android.app.ActivityManager.class);
+        java.util.List<android.app.ApplicationExitInfo> exits =
+            manager.getHistoricalProcessExitReasons(getPackageName(), 0, 5);
+        android.content.SharedPreferences diagnostics =
+            getSharedPreferences("vpn_exit_diagnostics", MODE_PRIVATE);
+        long lastSeen = diagnostics.getLong("last_exit_timestamp", 0L);
+        long newest = lastSeen;
+        for (android.app.ApplicationExitInfo exit : exits) {
+          if (exit.getTimestamp() <= lastSeen) continue;
+          newest = Math.max(newest, exit.getTimestamp());
+          int reason = exit.getReason();
+          if (reason == android.app.ApplicationExitInfo.REASON_CRASH_NATIVE
+              || reason == android.app.ApplicationExitInfo.REASON_CRASH
+              || reason == android.app.ApplicationExitInfo.REASON_ANR) {
+            log("上次进程异常退出：原因代码 " + reason
+                + "；时间 " + new java.util.Date(exit.getTimestamp())
+                + "；状态 " + exit.getStatus());
+          }
+        }
+        if (newest > lastSeen)
+          diagnostics.edit().putLong("last_exit_timestamp", newest).apply();
+      } catch (RuntimeException ignored) {
+        // Exit diagnostics must never prevent the VPN service from starting.
+      }
+    }
     android.content.SharedPreferences previous = getSharedPreferences("vpn_startup", MODE_PRIVATE);
     if (previous.getBoolean("pending", false)) {
       log("检测到上次 VPN 启动异常中断；最后阶段：" +
