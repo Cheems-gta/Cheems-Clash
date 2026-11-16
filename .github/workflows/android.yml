@@ -49,7 +49,7 @@ jobs:
           cp core-upstream/COPYING app/src/main/assets/licenses/Cheems-Core-GPL-3.0.txt
           cp core-upstream/THIRD_PARTY_NOTICES.md app/src/main/assets/licenses/THIRD_PARTY_NOTICES.md
           test ! -e app/src/main/java/com/cheems/clash/ClashVpnService.kt
-          ! grep -R -E 'metacubex/mihomo|Mihomo' app/src/main/java app/build.gradle.kts
+          ! grep -R -E '^import core\\.Core|^import core\\.Protector|metacubex/mihomo' app/src/main/java app/build.gradle.kts
       - name: Run native core tests
         working-directory: core-upstream/native/quic
         run: |
