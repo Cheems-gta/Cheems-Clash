@@ -70,7 +70,7 @@ jobs:
           go mod tidy
           gomobile init
           gomobile bind -ldflags='-extldflags=-Wl,-z,max-page-size=16384,-z,common-page-size=16384' -target=android/arm,android/arm64 -javapkg go -androidapi 28 -o cheems-quic.aar ./mobilebridge
-          mkdir -p ../../app/libs
+          mkdir -p ../../../app/libs
           cp cheems-quic.aar ../../../app/libs/cheems-quic.aar
       - name: Verify native bridge and build APK
         run: |
