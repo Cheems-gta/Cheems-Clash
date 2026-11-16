@@ -87,7 +87,8 @@ jobs:
           unzip -t app/build/outputs/apk/debug/app-debug.apk | tail -n 2
           sha256sum app/build/outputs/apk/debug/app-debug.apk
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose app/build/outputs/apk/debug/app-debug.apk
-          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep libgojni.so
+          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep "lib/arm64-v8a/libgojni.so"
+          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep "lib/armeabi-v7a/libgojni.so"
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -106,10 +107,6 @@ jobs:
           arch: x86_64
           disable-animations: true
           script: |
-            mkdir -p /tmp/cheems-probe
-            echo CHEEMS_TUN_OK > /tmp/cheems-probe/health.txt
-            python3 -m http.server 8765 --directory /tmp/cheems-probe > /tmp/cheems-http.log 2>&1 &
-            adb push scripts/probe.sh /data/local/tmp/cheems-probe.sh
             adb install app/build/outputs/apk/debug/app-debug.apk
             adb install app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             adb shell appops set com.cheems.clash ACTIVATE_VPN allow
