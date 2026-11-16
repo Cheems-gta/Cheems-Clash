@@ -1,5 +1,5 @@
 import json, pathlib, shutil, subprocess
-raw = subprocess.check_output(['go', 'list', '-m', '-json', 'all'], cwd='core-source/native/quic', text=True)
+raw = subprocess.check_output(['go', 'list', '-mod=mod', '-m', '-json', 'all'], cwd='core-source/native/quic', text=True)
 decoder = json.JSONDecoder(); modules = []
 while raw.strip():
     value, end = decoder.raw_decode(raw.lstrip()); modules.append(value); raw = raw.lstrip()[end:]
