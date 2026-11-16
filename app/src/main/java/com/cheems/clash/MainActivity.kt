@@ -94,7 +94,6 @@ fun CheemsApp() {
     val error by CoreController.error.collectAsState()
     val nodes by CoreController.nodes.collectAsState()
     val selected by CoreController.selected.collectAsState()
-    val allowUnverifiedTls by CoreController.allowUnverifiedTls.collectAsState()
     val up by CoreController.upload.collectAsState()
     val down by CoreController.download.collectAsState()
     val connections by CoreController.connections.collectAsState()
@@ -156,10 +155,8 @@ fun CheemsApp() {
                             Text("连接状态",color=Color.LightGray); Spacer(Modifier.height(18.dp))
                             Text(status,color=Green,fontSize=27.sp,fontWeight=FontWeight.Bold)
                             Spacer(Modifier.height(8.dp)); Text("Cheems Core · Android 全局 VPN",color=Color.LightGray,fontSize=12.sp)
-                            if (allowUnverifiedTls) {
-                                Spacer(Modifier.height(8.dp))
-                                Text("⚠ 兼容模式：TLS 证书验证已关闭", color=Color(0xFFFFC66D), fontSize=12.sp)
-                            }
+                            Spacer(Modifier.height(8.dp))
+                            Text("⚠ TLS 服务器证书验证已关闭", color=Color(0xFFFFC66D), fontSize=12.sp)
                             if(error.isNotEmpty()) { Spacer(Modifier.height(10.dp)); Text(error,color=Color(0xFFFFB4AB)) }
                             Spacer(Modifier.height(22.dp))
                             Button(onClick={
@@ -244,14 +241,8 @@ fun CheemsApp() {
                         Text("Cheems Clash",color=Green,fontSize=21.sp,fontWeight=FontWeight.Bold)
                         Spacer(Modifier.height(12.dp)); Text("版本 0.3.0 · Cheems Core\n支持 arm64 / x86_64 · IPv4 / IPv6\n本应用自身流量不进入 VPN。\nAnyTLS 暂无通用 UDP 转发；DNS 使用 TCP 回退。",color=Color.White)
                         Spacer(Modifier.height(18.dp))
-                        Text("TLS 兼容模式",color=Green,fontSize=18.sp,fontWeight=FontWeight.Bold)
-                        Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
-                            Text("跳过服务器证书验证",color=Color.White,modifier=Modifier.weight(1f))
-                            Switch(checked=allowUnverifiedTls,enabled=!running&&!busy,onCheckedChange={
-                                CoreController.setAllowUnverifiedTls(context,it)
-                            })
-                        }
-                        Text("默认关闭。开启后将不验证 TLS 服务器身份，可能遭遇冒充服务器或中间人攻击。仅对你信任的节点使用；连接时不能更改。",color=Color(0xFFFFC66D),fontSize=12.sp)
+                        Text("TLS 兼容模式：始终跳过服务器证书验证",color=Green,fontSize=18.sp,fontWeight=FontWeight.Bold)
+                        Text("此版本不会验证 TLS 服务器身份，存在服务器冒充和中间人攻击风险。",color=Color(0xFFFFC66D),fontSize=12.sp)
                         Spacer(Modifier.height(18.dp))
                         Text("VPN 稳定性诊断",color=Green,fontSize=18.sp,fontWeight=FontWeight.Bold)
                         Spacer(Modifier.height(8.dp))
