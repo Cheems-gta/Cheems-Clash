@@ -59,7 +59,7 @@ class VpnSmokeTest {
                 assertTrue(runBlocking { CoreController.probe() } >= 0)
                 val notification = context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.single { it.id==1 }.notification
                 assertEquals(R.drawable.ic_notification, notification.smallIcon.resId)
-                assertEquals(R.mipmap.cheems_brand_icon, context.applicationInfo.icon)
+                assertEquals(R.mipmap.cheems_app_icon, context.applicationInfo.icon)
                 // Always change to the OTHER node. Selecting an already-selected
                 // node can momentarily satisfy readiness before the restart begins.
                 val currentKey = CoreController.selected.value
