@@ -25,6 +25,7 @@ public final class Subscription {
     if (text.getBytes(StandardCharsets.UTF_8).length > MAX_BYTES)
       throw new IllegalArgumentException("解码后的订阅超过 2 MB");
     List<Node> result = new ArrayList<>();
+    int skipped = 0;
     if (text.startsWith("proxies:")
         || text.contains("\nproxies:")
         || text.startsWith("{")
@@ -41,18 +42,21 @@ public final class Subscription {
         if (!(entry instanceof Map)) continue;
         Map<String, Object> map = new LinkedHashMap<>();
         ((Map<?, ?>) entry).forEach((k, v) -> map.put(String.valueOf(k), v));
-        result.add(new Node(map));
+        try { result.add(new Node(map)); }
+        catch (RuntimeException invalidNode) { skipped++; }
         if (result.size() > MAX_NODES) throw new IllegalArgumentException("节点数量超过 2000");
       }
     } else {
       for (String line : text.split("\\r?\\n")) {
         line = line.trim();
         if (line.isEmpty() || line.startsWith("#")) continue;
-        result.add(parseUri(line));
+        try { result.add(parseUri(line)); }
+        catch (Exception invalidNode) { skipped++; }
         if (result.size() > MAX_NODES) throw new IllegalArgumentException("节点数量超过 2000");
       }
     }
-    if (result.isEmpty()) throw new IllegalArgumentException("未识别到节点，请使用 Clash 订阅或节点分享链接");
+    if (result.isEmpty()) throw new IllegalArgumentException(
+        "未识别到有效节点（跳过 " + skipped + " 条异常记录），请检查订阅格式");
     return result;
   }
 
@@ -70,7 +74,7 @@ public final class Subscription {
       m.put("name", u.getRawFragment() == null ? "TUIC · " + u.getHost() : urlDecode(u.getRawFragment()));
       String credentials = u.getRawUserInfo() == null ? "" : u.getRawUserInfo();
       String[] pair = credentials.split(":", 2);
-      m.put("uuid", urlDecode(pair[0]));
+      m.put("uuid", urlDecode(pair.length > 0 ? pair[0] : ""));
       m.put("password", pair.length == 2 ? urlDecode(pair[1]) : "");
       if (u.getRawQuery() != null) for (String part : u.getRawQuery().split("&")) {
         String[] kv = part.split("=", 2);
@@ -235,7 +239,7 @@ public final class Subscription {
     } else if (scheme.equals("trojan")) m.put("password", user);
     else {
       String[] pair = user.split(":", 2);
-      m.put("username", pair[0]);
+      m.put("username", pair.length > 0 ? pair[0] : "");
       m.put("password", pair.length > 1 ? pair[1] : "");
     }
     if (u.getRawQuery() != null)
