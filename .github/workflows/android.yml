@@ -2,6 +2,8 @@ name: Cheems Core APK
 on:
   push:
     branches: [main, cheems-core-only]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
