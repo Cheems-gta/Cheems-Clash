@@ -28,6 +28,17 @@ public final class NodeHysteria2Test {
     assertTrue("the UI must warn about the provider's insecure setting", n.hasInsecureTlsFlag());
   }
 
+
+  @Test public void trustedCertificateSettingsSurviveNodeImport() {
+    String pem = "-----BEGIN CERTIFICATE-----\\nTEST\\n-----END CERTIFICATE-----";
+    String pin = "0123456789abcdef";
+    Node n = node("hysteria2", "ca-str", pem, "pinSHA256", pin, "skip-cert-verify", false);
+    assertTrue(n.supported());
+    assertEquals(pem, n.trustedCAPEM());
+    assertEquals(pin, n.certificateSHA256());
+    assertFalse(n.hasInsecureTlsFlag());
+  }
+
   @Test public void unsupportedFeaturesCannotBeSilentlyIgnored() {
     assertFalse(node("hysteria2", "obfs", "salamander").supported());
     assertFalse(node("hysteria2", "ports", "443,444").supported());
