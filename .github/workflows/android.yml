@@ -45,6 +45,8 @@ jobs:
         run: |
           go get -tool golang.org/x/mobile/cmd/gobind@19777044486779222400e9ca16c4306f9c6dbfa9
           go mod tidy
+          go mod vendor
+          (cd ../../.. && python3 scripts/patch_anytls_stream.py)
       - name: Test native Core
         working-directory: core-source/native/quic
         run: go test -race ./... -timeout=180s
@@ -97,7 +99,7 @@ jobs:
         run: |
           mkdir -p dist
           cp app/build/outputs/apk/debug/app-debug.apk dist/Cheems-Clash-v0.3.0-Core-only.apk
-          (cd core-source/native/quic && go mod vendor)
+          grep -q 'atomic.Pointer\[streamCloseError\]' core-source/native/quic/vendor/github.com/anytls/sing-anytls/session/stream.go
           tar --exclude=.git --exclude=.gradle --exclude=dist --exclude='*/build' --exclude='*.aar' --exclude='*.apk' -czf dist/Cheems-Clash-v0.3.0-Core-only-source.tar.gz .
           cd dist
           sha256sum * > SHA256SUMS.txt
