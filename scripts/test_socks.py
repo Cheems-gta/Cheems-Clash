@@ -30,7 +30,7 @@ class Handler(socketserver.BaseRequestHandler):
             headers = b''
             while b'\r\n\r\n' not in headers and len(headers) < 16384:
                 headers += self.recv(1)
-            body = b'CHEEMS_CORE_TUN_OK\\n' if port != 8766 else b'CHEEMS_CORE_LARGE_OK\\n' + b'X' * (256 * 1024)
+            body = b'CHEEMS_CORE_TUN_OK' if port != 8766 else b'CHEEMS_CORE_LARGE_OK' + b'X' * (256 * 1024)
             self.request.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: '+str(len(body)).encode()+b'\r\nConnection: close\r\n\r\n'+body)
         except (OSError, EOFError, AssertionError, ValueError): pass
 
