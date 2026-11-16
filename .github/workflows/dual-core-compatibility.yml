@@ -1,0 +1,39 @@
+name: Dual core dependency compatibility
+on:
+  push:
+    branches: [dual-core-integration]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  combined-library:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+      - name: Fetch pinned engines
+        run: |
+          git clone --depth 1 --branch v1.19.34 https://github.com/MetaCubeX/mihomo.git mihomo-src
+          test "$(git -C mihomo-src rev-parse HEAD)" = "0455d0d28c4526937380505153e65a843d8612e8"
+          git clone https://github.com/Cheems-gta/Cheems-Core.git cheems-core-src
+          git -C cheems-core-src checkout 148b1034255a4a097695baf6c173c1f545a51ae1
+      - name: Check shared dependency graph
+        working-directory: native
+        run: |
+          go mod edit -go=1.26.0
+          go mod edit -require=github.com/Cheems-gta/Cheems-Core/native/quic@v0.0.0
+          go mod edit -replace=github.com/Cheems-gta/Cheems-Core/native/quic=../cheems-core-src/native/quic
+          cp ../integration/combined_import.go ./combined_import.go
+          go mod tidy
+          go test -tags with_gvisor,cmfa ./...
+          go test -tags with_gvisor,cmfa github.com/Cheems-gta/Cheems-Core/native/quic/...
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dual-core-module-resolution
+          path: |
+            native/go.mod
+            native/go.sum
