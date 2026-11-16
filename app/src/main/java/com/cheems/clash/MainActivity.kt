@@ -66,22 +66,50 @@ private fun parseUsage(header: String?): String? {
     return "已用 ${gb(used)} · 剩余 ${gb((total-used).coerceAtLeast(0))}\n总量 ${gb(total)} · 到期 $expiry"
 }
 private fun downloadProfile(link: String): SubscriptionDownload {
-    var url = URL(link.trim())
-    repeat(6) {
-        require(url.protocol == "https") { "订阅链接及跳转地址必须使用 HTTPS" }
-        val conn = url.openConnection() as HttpURLConnection
-        try {
-            conn.instanceFollowRedirects = false; conn.connectTimeout=15000; conn.readTimeout=20000
-            conn.setRequestProperty("User-Agent","Clash/Cheems-Core")
-            val code=conn.responseCode
-            if (code in 300..399) { url=URL(url,conn.getHeaderField("Location") ?: error("订阅跳转缺少地址")) }
-            else {
-                require(code in 200..299) { "订阅服务器返回 HTTP $code" }
-                return SubscriptionDownload(conn.inputStream.use { it.readBytesLimited() }, parseUsage(conn.getHeaderField("subscription-userinfo")))
+    val clientIds = listOf("ClashMetaForAndroid/2.11.20", "clash.meta", "ClashForAndroid/2.5.12", "Clash/Cheems-Core")
+    var lastHttpError = 0
+    for ((index, clientId) in clientIds.withIndex()) {
+        var url = URL(link.trim())
+        repeat(6) {
+            require(url.protocol.equals("https", ignoreCase = true)) {
+                "订阅链接及跳转地址必须使用 HTTPS"
             }
-        } finally { conn.disconnect() }
+            val conn = url.openConnection() as HttpURLConnection
+            try {
+                conn.instanceFollowRedirects = false
+                conn.connectTimeout = 15000
+                conn.readTimeout = 20000
+                conn.setRequestProperty("User-Agent", clientId)
+                conn.setRequestProperty("Accept", "application/yaml, text/yaml, text/plain, */*")
+                val code = conn.responseCode
+                if (code in 300..399) {
+                    url = URL(url, conn.getHeaderField("Location") ?: error("订阅跳转缺少地址"))
+                } else {
+                    if (code in 200..299) {
+                        return SubscriptionDownload(
+                            conn.inputStream.use { it.readBytesLimited() },
+                            parseUsage(conn.getHeaderField("subscription-userinfo"))
+                        )
+                    }
+                    lastHttpError = code
+                    // A provider may reject an unfamiliar client identifier.
+                    // Retry only explicit client-format negotiation errors.
+                    if (code != 400 && code != 406 && code != 422) {
+                        error("订阅服务器返回 HTTP $code")
+                    }
+                    if (index == clientIds.lastIndex) {
+                        error("订阅服务器返回 HTTP $code（已尝试兼容请求头）")
+                    }
+                    break
+                }
+            } finally {
+                conn.disconnect()
+            }
+        }
+        // Continue only after a format-related HTTP rejection.
+        if (lastHttpError !in setOf(400, 406, 422)) error("订阅跳转次数过多")
     }
-    error("订阅跳转次数过多")
+    error("订阅服务器拒绝请求：HTTP $lastHttpError")
 }
 private fun java.io.InputStream.readBytesLimited(): ByteArray {
     val out=java.io.ByteArrayOutputStream(); val buffer=ByteArray(8192)
