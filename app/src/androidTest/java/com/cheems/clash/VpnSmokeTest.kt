@@ -33,6 +33,8 @@ class VpnSmokeTest {
               - {name: fixture-two, type: socks5, server: 10.0.2.2, port: 10880}
         """.trimIndent())
         runBlocking { CoreController.reload(context) }
+        assertEquals(2, CoreController.nodes.value.size)
+        assertTrue("Imported nodes must retain original TLS settings", CoreController.nodes.value.all { !it.hasInsecureTlsFlag() })
         fun probe() {
             val descriptor = instrumentation.uiAutomation.executeShellCommand("sh /data/local/tmp/cheems-probe.sh")
             val response = android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }
