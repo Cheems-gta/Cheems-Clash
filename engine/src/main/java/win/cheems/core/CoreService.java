@@ -42,6 +42,7 @@ public final class CoreService extends VpnService {
     events = new DiagnosticJournal(context.getSharedPreferences("vpn_events", MODE_PRIVATE));
   }
   private final AtomicBoolean launching = new AtomicBoolean();
+  private final AtomicBoolean shutdownQueued = new AtomicBoolean();
   private volatile boolean destroyed;
   private volatile ParcelFileDescriptor vpnInterface;
   private volatile String startupStage = "未开始";
@@ -126,10 +127,10 @@ public final class CoreService extends VpnService {
     watcher.start();
   }
 
-  @Override
-  public void onCreate() {
-    super.onCreate();
+  private void prepareRuntimeSession() {
     destroyed = false;
+    launching.set(false);
+    shutdownQueued.set(false);
     serviceAlive = true;
     tunnelEstablished = false;
     forwardingVerified = false;
@@ -139,6 +140,12 @@ public final class CoreService extends VpnService {
     localHttpPassword = ownedHttpPassword;
     ownedCore = new ProxyCore(CoreService::log, ownedHttpPassword);
     core = ownedCore;
+  }
+
+  @Override
+  public void onCreate() {
+    super.onCreate();
+    prepareRuntimeSession();
     android.content.SharedPreferences previous = getSharedPreferences("vpn_startup", MODE_PRIVATE);
     if (previous.getBoolean("pending", false)) {
       log("检测到上次 VPN 启动异常中断；最后阶段：" +
@@ -150,17 +157,15 @@ public final class CoreService extends VpnService {
   @Override
   public int onStartCommand(Intent intent, int flags, int id) {
     if (intent != null && ACTION_STOP_VPN.equals(intent.getAction())) {
-      log("VPN 停止请求：关闭 TUN 后停止服务");
-      // Android may keep a VPN service bound while its TUN is open.
-      // Release the VPN interface before requesting service shutdown.
-      ParcelFileDescriptor activeTun = vpnInterface;
-      if (activeTun != null) {
-        try { activeTun.close(); } catch (IOException ignored) {}
-      }
+      log("VPN 停止请求：序列化释放隧道和内核");
+      shutdownRuntimeSession();
       try { stopForeground(STOP_FOREGROUND_REMOVE); } catch (RuntimeException ignored) {}
       stopSelf();
       return START_NOT_STICKY;
     }
+    // A VPN service can stay Android-bound after stopSelf(). Support starting
+    // a fresh core session on that same service object once shutdown finishes.
+    if (!serviceAlive && !connecting) prepareRuntimeSession();
     NotificationManager nm = getSystemService(NotificationManager.class);
     nm.createNotificationChannel(
         new NotificationChannel("core", "Cheems Core VPN", NotificationManager.IMPORTANCE_LOW));
@@ -345,42 +350,56 @@ public final class CoreService extends VpnService {
     log("Android全局VPN和IPv4/IPv6隧道已启动");
   }
 
-  @Override
-  public void onDestroy() {
+  // Do not rely on onDestroy: Android keeps VpnService bound while its VPN
+  // is registered. Complete shutdown explicitly on STOP, then publish
+  // serviceAlive=false only after TUN and native session are really gone.
+  private void shutdownRuntimeSession() {
+    if (!shutdownQueued.compareAndSet(false, true)) return;
     destroyed = true;
     Thread watcher = connectionMonitor;
     if (watcher != null) watcher.interrupt();
     connecting = true;
     SERIAL.execute(() -> {
-    if (ownedCore != null) ownedCore.stop();
-    try { if(Hysteria2Native.isPackaged()) Hysteria2Native.stopTunnel(); }
-    catch(Exception e) { log("TUN关闭异常"); }
-    if(vpnInterface!=null) {try{vpnInterface.close();}catch(IOException ignored){} vpnInterface=null;}
-    if (core == ownedCore) {
-      tunnelEstablished = false;
-      forwardingVerified = false;
-      core = null;
-    }
-    if (ownedHttpPassword != null && ownedHttpPassword.equals(localHttpPassword))
-      localHttpPassword = null;
-    // Stop synchronously so an old asynchronous shutdown cannot destroy
-    // a newly selected node's native session. Go Stop cancels pending startup.
-    try {
-      if (Hysteria2Native.isPackaged()) Hysteria2Native.stop();
-    } catch (Exception e) {
-      log("原生连接关闭异常");
-    }
-    finishStage(lastFailure == null ? "用户或系统已停止 VPN" : "启动或连接失败，服务已关闭");
-    connecting = false;
-    serviceAlive = false;
+      try {
+        if (ownedCore != null) ownedCore.stop();
+        try { if (Hysteria2Native.isPackaged()) Hysteria2Native.stopTunnel(); }
+        catch (Exception e) { log("TUN关闭异常"); }
+        if (vpnInterface != null) {
+          try { vpnInterface.close(); } catch (IOException ignored) {}
+          vpnInterface = null;
+        }
+        if (core == ownedCore) {
+          tunnelEstablished = false;
+          forwardingVerified = false;
+          core = null;
+        }
+        if (ownedHttpPassword != null && ownedHttpPassword.equals(localHttpPassword))
+          localHttpPassword = null;
+        try {
+          if (Hysteria2Native.isPackaged()) Hysteria2Native.stop();
+        } catch (Exception e) {
+          log("原生连接关闭异常");
+        }
+        finishStage(lastFailure == null ? "用户或系统已停止 VPN" : "启动或连接失败，服务已关闭");
+      } finally {
+        launching.set(false);
+        connecting = false;
+        serviceAlive = false;
+      }
     });
-    stopForeground(STOP_FOREGROUND_REMOVE);
+  }
+
+  @Override
+  public void onDestroy() {
+    shutdownRuntimeSession();
+    try { stopForeground(STOP_FOREGROUND_REMOVE); } catch (RuntimeException ignored) {}
     super.onDestroy();
   }
 
   @Override
   public void onRevoke() {
     log("Android VPN 权限已撤销，正在关闭节点和隧道");
+    shutdownRuntimeSession();
     stopSelf();
     super.onRevoke();
   }
