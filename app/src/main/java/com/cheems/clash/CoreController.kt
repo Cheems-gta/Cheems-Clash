@@ -24,6 +24,14 @@ object CoreController {
     val upload = MutableStateFlow(0L)
     val download = MutableStateFlow(0L)
     val connections = MutableStateFlow(0L)
+    /** User-controlled compatibility mode; OFF unless explicitly enabled on this device. */
+    val allowUnverifiedTls = MutableStateFlow(false)
+    fun setAllowUnverifiedTls(context: Context, enabled: Boolean) {
+        if (CoreService.connecting || CoreService.tunnelEstablished || operation) return
+        context.getSharedPreferences("profile", 0).edit()
+            .putBoolean("allow_unverified_tls", enabled).apply()
+        allowUnverifiedTls.value = enabled
+    }
     private var operation = false
     private var watcher: Job? = null
     fun key(node: Node): String = MessageDigest.getInstance("SHA-256")
@@ -45,6 +53,8 @@ object CoreController {
             ?: imported.firstOrNull(::vpnCapable)?.let(::key).orEmpty()
     }
     fun observe(context: Context) {
+        allowUnverifiedTls.value = context.getSharedPreferences("profile", 0)
+            .getBoolean("allow_unverified_tls", false)
         if (watcher != null) return
         val app = context.applicationContext
         watcher = scope.launch {
@@ -95,7 +105,7 @@ object CoreController {
                 CoreService.lastFailure = null
                 CoreService.connecting = true
                 context.startForegroundService(Intent(context, CoreService::class.java)
-                    .putExtra("hy2.allowUnverifiedTls", true))
+                    .putExtra("hy2.allowUnverifiedTls", allowUnverifiedTls.value))
             } catch (e: Exception) {
                 CoreService.connecting = false
                 CoreService.lastFailure = "无法启动 VPN：${e.javaClass.simpleName}"
