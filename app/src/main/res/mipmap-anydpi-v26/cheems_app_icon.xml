@@ -1,5 +1,5 @@
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/cheems_icon_background" />
-    <foreground android:drawable="@drawable/cheems_icon_foreground" />
-    <monochrome android:drawable="@drawable/ic_notification" />
+    <foreground android:drawable="@drawable/doreena_cat" />
+    <monochrome android:drawable="@drawable/doreena_cat" />
 </adaptive-icon>
