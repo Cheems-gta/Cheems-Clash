@@ -18,7 +18,7 @@ class VpnSmokeTest {
     private fun awaitState(check: () -> Boolean) {
         val deadline = System.currentTimeMillis()+60000
         while (!check() && System.currentTimeMillis()<deadline) Thread.sleep(150)
-        assertTrue("Core state: ${CoreService.logs()}", check())
+        assertTrue("Core state: selected=${CoreController.selected.value} serviceSelected=${CoreService.selected?.name} tunnel=${CoreService.tunnelEstablished} connecting=${CoreService.connecting} serviceAlive=${CoreService.serviceAlive} lastFailure=${CoreService.lastFailure}\n${CoreService.logs()}", check())
     }
     @Test fun testSingleCoreStartSwitchStopRestart() {
         val context = instrumentation.targetContext
