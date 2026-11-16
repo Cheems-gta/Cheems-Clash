@@ -25,7 +25,7 @@ class VpnSmokeTest {
             socket.connect(java.net.InetSocketAddress("198.18.0.42", 8766), 15000)
             socket.soTimeout = 20000
             socket.getOutputStream().write(
-                "GET /large HTTP/1.1\\r\\nHost: 198.18.0.42\\r\\nConnection: close\\r\\n\\r\\n"
+                "GET /large HTTP/1.1\r\nHost: 198.18.0.42\r\nConnection: close\r\n\r\n"
                     .toByteArray(Charsets.US_ASCII)
             )
             val received = socket.getInputStream().readBytes()
