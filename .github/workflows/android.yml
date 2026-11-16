@@ -49,12 +49,16 @@ jobs:
           (cd ../../.. && python3 scripts/patch_anytls_stream.py)
           go mod edit -replace=github.com/anytls/sing-anytls=./third_party/sing-anytls
           go mod tidy
+      - name: Patch vendored AnyTLS stream race
+        run: |
+          (cd core-source/native/quic && go mod vendor)
+          python3 scripts/patch_anytls_race.py
       - name: Test native Core
         working-directory: core-source/native/quic
-        run: go test -race ./... -timeout=180s
+        run: go test -mod=vendor -race ./... -timeout=180s
       - name: Vet native Core
         working-directory: core-source/native/quic
-        run: go vet ./...
+        run: go vet -mod=vendor ./...
       - name: Initialize gomobile
         run: |
           export PATH="$(go env GOPATH)/bin:$PATH"
