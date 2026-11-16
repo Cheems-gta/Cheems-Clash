@@ -95,7 +95,7 @@ object CoreController {
                 CoreService.lastFailure = null
                 CoreService.connecting = true
                 context.startForegroundService(Intent(context, CoreService::class.java)
-                    .putExtra("hy2.allowUnverifiedTls", false))
+                    .putExtra("hy2.allowUnverifiedTls", true))
             } catch (e: Exception) {
                 CoreService.connecting = false
                 CoreService.lastFailure = "无法启动 VPN：${e.javaClass.simpleName}"
