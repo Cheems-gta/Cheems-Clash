@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import win.cheems.core.CoreService
 import win.cheems.core.net.Subscription
+import win.cheems.core.net.SubscriptionDownloader
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.io.File
@@ -43,7 +44,9 @@ private fun saveProfile(dir: File, bytes: ByteArray) {
     require(bytes.isNotEmpty() && bytes.size <= MaxConfig) { "配置为空或超过 2 MB" }
     val text = bytes.toString(Charsets.UTF_8)
     require(!text.trimStart().startsWith("<")) { "下载结果是网页，请使用节点订阅链接" }
-    Subscription.parse(text) // Validate before atomically replacing the working subscription.
+    try { Subscription.parse(text) } catch (e: Exception) {
+        throw IllegalArgumentException("订阅下载成功，但节点配置解析失败（${e.javaClass.simpleName}）；请检查订阅格式")
+    } // Validate before atomically replacing the working subscription.
     val temp = File(dir,"profile.tmp")
     temp.writeBytes(bytes)
     check(temp.renameTo(File(dir,"profile.yaml"))) { "保存配置失败" }
@@ -66,51 +69,8 @@ private fun parseUsage(header: String?): String? {
     return "已用 ${gb(used)} · 剩余 ${gb((total-used).coerceAtLeast(0))}\n总量 ${gb(total)} · 到期 $expiry"
 }
 private fun downloadProfile(link: String): SubscriptionDownload {
-    val clientIds = listOf("ClashMetaForAndroid/2.11.20", "clash.meta", "ClashForAndroid/2.5.12", "Clash/Cheems-Core")
-    var lastHttpError = 0
-    for ((index, clientId) in clientIds.withIndex()) {
-        var url = URL(link.trim())
-        var redirects = 0
-        while (redirects++ < 6) {
-            require(url.protocol.equals("https", ignoreCase = true)) {
-                "订阅链接及跳转地址必须使用 HTTPS"
-            }
-            val conn = url.openConnection() as HttpURLConnection
-            try {
-                conn.instanceFollowRedirects = false
-                conn.connectTimeout = 15000
-                conn.readTimeout = 20000
-                conn.setRequestProperty("User-Agent", clientId)
-                conn.setRequestProperty("Accept", "application/yaml, text/yaml, text/plain, */*")
-                val code = conn.responseCode
-                if (code in 300..399) {
-                    url = URL(url, conn.getHeaderField("Location") ?: error("订阅跳转缺少地址"))
-                } else {
-                    if (code in 200..299) {
-                        return SubscriptionDownload(
-                            conn.inputStream.use { it.readBytesLimited() },
-                            parseUsage(conn.getHeaderField("subscription-userinfo"))
-                        )
-                    }
-                    lastHttpError = code
-                    // A provider may reject an unfamiliar client identifier.
-                    // Retry only explicit client-format negotiation errors.
-                    if (code != 400 && code != 406 && code != 422) {
-                        error("订阅服务器返回 HTTP $code")
-                    }
-                    if (index == clientIds.lastIndex) {
-                        error("订阅服务器返回 HTTP $code（已尝试兼容请求头）")
-                    }
-                    break
-                }
-            } finally {
-                conn.disconnect()
-            }
-        }
-        // Continue only after a format-related HTTP rejection.
-        if (lastHttpError !in setOf(400, 406, 422)) error("订阅跳转次数过多")
-    }
-    error("订阅服务器拒绝请求：HTTP $lastHttpError")
+    val result = SubscriptionDownloader.download(link)
+    return SubscriptionDownload(result.data, parseUsage(result.usage))
 }
 private fun java.io.InputStream.readBytesLimited(): ByteArray {
     val out=java.io.ByteArrayOutputStream(); val buffer=ByteArray(8192)
@@ -271,7 +231,7 @@ fun CheemsApp() {
                                 context.getSharedPreferences("profile",0).edit().putString("url",url.trim()).putString("usage",subscriptionUsage).apply()
                                 context.getSharedPreferences("profile",0).edit().putLong("last_refresh",System.currentTimeMillis()).apply()
                                 CoreController.reload(context); hasProfile=true; message="订阅已更新，可以连接"
-                            } catch(e:Exception) { message=e.message ?: "订阅下载失败" }
+                            } catch(e:Exception) { message="订阅处理失败：${e.message ?: e.javaClass.simpleName}" }
                             finally { importing=false }
                         }},enabled=!running&&!busy&&!importing&&url.isNotBlank(),modifier=Modifier.fillMaxWidth()) { Text(if(importing) "正在导入…" else "更新节点 / 订阅") }
                     }
