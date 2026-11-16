@@ -70,7 +70,8 @@ private fun downloadProfile(link: String): SubscriptionDownload {
     var lastHttpError = 0
     for ((index, clientId) in clientIds.withIndex()) {
         var url = URL(link.trim())
-        repeat(6) {
+        var redirects = 0
+        while (redirects++ < 6) {
             require(url.protocol.equals("https", ignoreCase = true)) {
                 "订阅链接及跳转地址必须使用 HTTPS"
             }
@@ -100,7 +101,7 @@ private fun downloadProfile(link: String): SubscriptionDownload {
                     if (index == clientIds.lastIndex) {
                         error("订阅服务器返回 HTTP $code（已尝试兼容请求头）")
                     }
-                    return@repeat
+                    break
                 }
             } finally {
                 conn.disconnect()
