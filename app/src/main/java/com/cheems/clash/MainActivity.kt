@@ -143,7 +143,7 @@ fun CheemsApp() {
     }
     MaterialTheme(colorScheme=darkColorScheme(primary=Green,background=Background,surface=Panel)) {
         Column(Modifier.fillMaxSize().background(Background).systemBarsPadding().padding(20.dp)) {
-            Text("CHEEMS  /  CLASH",color=Green,fontSize=14.sp,fontWeight=FontWeight.Bold)
+            Text("DOREENA",color=Green,fontSize=14.sp,fontWeight=FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
             Text(listOf("控制台","节点","配置","设置")[tab],color=Color.White,fontSize=30.sp,fontWeight=FontWeight.Bold)
             Spacer(Modifier.height(24.dp))
@@ -154,7 +154,7 @@ fun CheemsApp() {
                         PanelCard {
                             Text("连接状态",color=Color.LightGray); Spacer(Modifier.height(18.dp))
                             Text(status,color=Green,fontSize=27.sp,fontWeight=FontWeight.Bold)
-                            Spacer(Modifier.height(8.dp)); Text("Cheems Core · Android 全局 VPN",color=Color.LightGray,fontSize=12.sp)
+                            Spacer(Modifier.height(8.dp)); Text("Making · Android 全局 VPN",color=Color.LightGray,fontSize=12.sp)
                             Spacer(Modifier.height(8.dp))
                             Text("⚠ TLS 服务器证书验证已关闭", color=Color(0xFFFFC66D), fontSize=12.sp)
                             if(error.isNotEmpty()) { Spacer(Modifier.height(10.dp)); Text(error,color=Color(0xFFFFB4AB)) }
@@ -238,8 +238,8 @@ fun CheemsApp() {
                         }},enabled=!running&&!busy&&!importing&&url.isNotBlank(),modifier=Modifier.fillMaxWidth()) { Text(if(importing) "正在导入…" else "更新节点 / 订阅") }
                     }
                     else -> PanelCard {
-                        Text("Cheems Clash",color=Green,fontSize=21.sp,fontWeight=FontWeight.Bold)
-                        Spacer(Modifier.height(12.dp)); Text("版本 0.3.0 · Cheems Core\n支持 arm64 / x86_64 · IPv4 / IPv6\n本应用自身流量不进入 VPN。\nAnyTLS 暂无通用 UDP 转发；DNS 使用 TCP 回退。",color=Color.White)
+                        Text("Doreena",color=Green,fontSize=21.sp,fontWeight=FontWeight.Bold)
+                        Spacer(Modifier.height(12.dp)); Text("版本 0.3.0 · Making\n支持 arm64 / x86_64 · IPv4 / IPv6\n本应用自身流量不进入 VPN。\nAnyTLS 暂无通用 UDP 转发；DNS 使用 TCP 回退。",color=Color.White)
                         Spacer(Modifier.height(18.dp))
                         Text("TLS 兼容模式：始终跳过服务器证书验证",color=Green,fontSize=18.sp,fontWeight=FontWeight.Bold)
                         Text("此版本不会验证 TLS 服务器身份，存在服务器冒充和中间人攻击风险。",color=Color(0xFFFFC66D),fontSize=12.sp)
@@ -249,7 +249,7 @@ fun CheemsApp() {
                         Text("显示内核启动、连接和隧道诊断；日志会遮蔽节点密钥。",color=Color.LightGray,fontSize=12.sp)
                         TextButton(onClick={diagnosticLog=CoreService.logs()}) { Text("刷新诊断记录") }
                         Text(if(diagnosticLog.isBlank()) "暂无诊断记录" else diagnosticLog,color=Color.White,fontSize=12.sp)
-                        Spacer(Modifier.height(12.dp)); Text("Cheems Core 单内核版本。源码、依赖与许可证：github.com/Cheems-gta/Cheems-Clash",color=Color.LightGray,fontSize=12.sp)
+                        Spacer(Modifier.height(12.dp)); Text("Making 内核版本。源码、依赖与许可证：github.com/Cheems-gta/Cheems-Clash",color=Color.LightGray,fontSize=12.sp)
                     }
                 }
             }
