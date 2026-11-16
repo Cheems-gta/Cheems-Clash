@@ -75,7 +75,7 @@ public final class CoreService extends VpnService {
         PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     return new Notification.Builder(this, "core")
         .setSmallIcon(getResources().getIdentifier("ic_notification", "drawable", getPackageName()))
-        .setContentTitle("Cheems Clash · Cheems Core")
+        .setContentTitle("Doreena · Making")
         .setContentText(message)
         .setContentIntent(open)
         .addAction(android.R.drawable.ic_menu_close_clear_cancel, "停止 VPN", stop)
@@ -237,7 +237,7 @@ public final class CoreService extends VpnService {
     if (!serviceAlive && !connecting) prepareRuntimeSession();
     NotificationManager nm = getSystemService(NotificationManager.class);
     nm.createNotificationChannel(
-        new NotificationChannel("core", "Cheems Core VPN", NotificationManager.IMPORTANCE_LOW));
+        new NotificationChannel("core", "Doreena VPN", NotificationManager.IMPORTANCE_LOW));
     Notification n = vpnNotification("VPN服务启动中，节点转发待验证");
     try {
       startForeground(1, n);
@@ -389,7 +389,7 @@ public final class CoreService extends VpnService {
     markStage("选择 VPN 底层网络");
     physicalNetwork=choosePhysicalNetwork();
     if(physicalNetwork==null) throw new IOException("No physical internet network available");
-    Builder builder=new Builder().setSession("Cheems Clash")
+    Builder builder=new Builder().setSession("Doreena")
         .setMtu(1500)
         .addAddress("10.77.0.1",30)
         .addAddress("fd77:77::1",126)
