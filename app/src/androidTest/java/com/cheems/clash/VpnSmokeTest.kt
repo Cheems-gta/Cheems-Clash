@@ -20,6 +20,22 @@ class VpnSmokeTest {
         while (!check() && android.os.SystemClock.elapsedRealtime()<deadline) Thread.sleep(150)
         assertTrue("Core state: selected=${CoreController.selected.value} serviceSelected=${CoreService.selected?.name} tunnel=${CoreService.tunnelEstablished} connecting=${CoreService.connecting} serviceAlive=${CoreService.serviceAlive} lastFailure=${CoreService.lastFailure}\n${CoreService.logs()}", check())
     }
+    private fun longTcpProbe() {
+        java.net.Socket().use { socket ->
+            socket.connect(java.net.InetSocketAddress("198.18.0.42", 8766), 15000)
+            socket.soTimeout = 20000
+            socket.getOutputStream().write(
+                "GET /large HTTP/1.1\\r\\nHost: 198.18.0.42\\r\\nConnection: close\\r\\n\\r\\n"
+                    .toByteArray(Charsets.US_ASCII)
+            )
+            val received = socket.getInputStream().readBytes()
+            val prefix = String(received.copyOfRange(0, minOf(received.size, 256)), Charsets.US_ASCII)
+            assertTrue("Large TCP proxy response is not HTTP 200: $prefix", prefix.startsWith("HTTP/1.1 200 OK"))
+            assertTrue("Large TCP transfer ended prematurely: ${received.size} bytes",
+                received.size >= 256 * 1024 + "CHEEMS_CORE_LARGE_OK".length)
+            assertEquals('X'.code.toByte(), received.last())
+        }
+    }
     @Test fun testSingleCoreStartSwitchStopRestart() {
         val context = instrumentation.targetContext
         assertNull(VpnService.prepare(context))
@@ -46,6 +62,7 @@ class VpnSmokeTest {
                 instrumentation.runOnMainSync { CoreController.connect(context) }
                 awaitState { CoreService.tunnelEstablished && !CoreService.connecting }
                 probe()
+                longTcpProbe()
                 assertTrue(runBlocking { CoreController.probe() } >= 0)
                 val notification = context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.single { it.id==1 }.notification
                 assertEquals(R.drawable.ic_notification, notification.smallIcon.resId)
@@ -58,6 +75,7 @@ class VpnSmokeTest {
                 instrumentation.runOnMainSync { CoreController.select(context, next) }
                 awaitState { CoreController.selected.value==CoreController.key(next) && CoreService.selected?.name==next.name && CoreService.tunnelEstablished && !CoreService.connecting }
                 probe()
+                longTcpProbe()
                 // Return to home: the foreground VPN must survive activity backgrounding.
                 instrumentation.uiAutomation.executeShellCommand("input keyevent KEYCODE_HOME").close()
                 Thread.sleep(1500)
