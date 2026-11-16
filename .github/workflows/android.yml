@@ -47,6 +47,8 @@ jobs:
           go mod tidy
           go mod download github.com/anytls/sing-anytls@v0.0.13
           (cd ../../.. && python3 scripts/patch_anytls_stream.py)
+          go mod edit -replace=github.com/anytls/sing-anytls=./third_party/sing-anytls
+          go mod tidy
       - name: Test native Core
         working-directory: core-source/native/quic
         run: go test -race ./... -timeout=180s
