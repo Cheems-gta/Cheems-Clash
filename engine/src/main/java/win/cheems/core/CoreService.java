@@ -17,7 +17,7 @@ import win.cheems.core.net.Node;
 import win.cheems.core.net.LocalProxyProbe;
 
 public final class CoreService extends VpnService {
-  private static final String ACTION_STOP_VPN = "win.cheems.core.STOP_VPN";
+  public static final String ACTION_STOP_VPN = "win.cheems.core.STOP_VPN";
   public static volatile Node selected;
   public static volatile boolean serviceAlive;
   private static final java.util.concurrent.ExecutorService SERIAL =
@@ -150,7 +150,13 @@ public final class CoreService extends VpnService {
   @Override
   public int onStartCommand(Intent intent, int flags, int id) {
     if (intent != null && ACTION_STOP_VPN.equals(intent.getAction())) {
-      log("用户通过通知栏请求停止 VPN");
+      log("VPN 停止请求：关闭 TUN 后停止服务");
+      // Android may keep a VPN service bound while its TUN is open.
+      // Release the VPN interface before requesting service shutdown.
+      ParcelFileDescriptor activeTun = vpnInterface;
+      if (activeTun != null) {
+        try { activeTun.close(); } catch (IOException ignored) {}
+      }
       try { stopForeground(STOP_FOREGROUND_REMOVE); } catch (RuntimeException ignored) {}
       stopSelf();
       return START_NOT_STICKY;
