@@ -90,6 +90,7 @@ jobs:
           script: |
             python3 scripts/test_socks.py > /tmp/cheems-socks.log 2>&1 &
             adb push scripts/probe.sh /data/local/tmp/cheems-probe.sh
+            adb push scripts/probe-large.sh /data/local/tmp/cheems-probe-large.sh
             adb install app/build/outputs/apk/debug/app-debug.apk
             adb install app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             adb shell appops set com.cheems.clash ACTIVATE_VPN allow
