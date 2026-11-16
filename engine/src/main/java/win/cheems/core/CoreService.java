@@ -201,11 +201,11 @@ public final class CoreService extends VpnService {
       int frames = 0;
       while ((line = reader.readLine()) != null && inspected++ < 2500 && frames < 12) {
         String trimmed = line.trim();
-        if (!trimmed.matches("#[0-9]{2}\\\\s+pc\\\\s+.*")) continue;
+        if (!trimmed.matches("#[0-9]{2}\\s+pc\\s+.*")) continue;
         // Keep only the library basename and a short symbol identifier.
         String library = "unknown";
         java.util.regex.Matcher match = java.util.regex.Pattern
-            .compile("/([^/\\\\s]+\\\\.so)(?:\\\\s|$)").matcher(trimmed);
+            .compile("/([^/\\s]+\\.so)(?:\\s|$)").matcher(trimmed);
         if (match.find()) library = match.group(1);
         String symbol = "";
         int open = trimmed.indexOf('(');
