@@ -26,7 +26,7 @@ class VpnSmokeTest {
         assertTrue("Core native binding absent", Hysteria2Native.isPackaged())
         assertTrue("Legacy JNI classes must not be packaged", runCatching { Class.forName("core.Core") }.isFailure)
         val services = context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SERVICES).services
-        assertEquals(listOf("win.cheems.core.CoreService"), services.map { it.name })
+        assertEquals(listOf("win.cheems.core.CoreService"), services.orEmpty().map { it.name })
         File(context.filesDir, "profile.yaml").writeText("""
             proxies:
               - {name: fixture-one, type: socks5, server: 10.0.2.2, port: 10880}
