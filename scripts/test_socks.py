@@ -26,11 +26,11 @@ class Handler(socketserver.BaseRequestHandler):
             self.request.sendall(b'\x05\x00\x00\x01\x7f\x00\x00\x01\x00\x00')
             # Return marker only through SOCKS; no HTTP server listens on the target port.
             # A direct/bypassed tunnel therefore cannot make the test pass.
-            if port not in (80, 8765): return
+            if port not in (80, 8765, 8766): return
             headers = b''
             while b'\r\n\r\n' not in headers and len(headers) < 16384:
                 headers += self.recv(1)
-            body = b'CHEEMS_CORE_TUN_OK\n'
+            body = b'CHEEMS_CORE_TUN_OK\\n' if port != 8766 else b'CHEEMS_CORE_LARGE_OK\\n' + b'X' * (256 * 1024)
             self.request.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: '+str(len(body)).encode()+b'\r\nConnection: close\r\n\r\n'+body)
         except (OSError, EOFError, AssertionError, ValueError): pass
 
