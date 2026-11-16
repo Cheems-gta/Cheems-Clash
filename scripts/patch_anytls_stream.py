@@ -4,11 +4,15 @@
 The upstream Stream stores an error interface in two machine words while
 another goroutine reads it. Publish the immutable value with an atomic pointer.
 Fail closed if upstream sources change, instead of silently skipping the fix.
-The corresponding source archive must contain this patched vendor directory.
+The source archive must contain the patched dependency as vendored source.
 """
 from pathlib import Path
+import stat
+import subprocess
 
-path = Path("core-source/native/quic/vendor/github.com/anytls/sing-anytls/session/stream.go")
+module_cache = Path(subprocess.check_output(["go", "env", "GOMODCACHE"], text=True).strip())
+path = module_cache / "github.com/anytls/sing-anytls@v0.0.13/session/stream.go"
+path.chmod(path.stat().st_mode | stat.S_IWUSR)
 source = path.read_text(encoding="utf-8")
 
 def replace_once(before: str, after: str) -> None:
@@ -47,4 +51,4 @@ replace_once('\t\ts.dieErr = net.ErrClosed\n', '\t\ts.dieErr.Store(&streamCloseE
 replace_once('\t\ts.dieErr = err\n', '\t\ts.dieErr.Store(&streamCloseError{err: err})\n')
 replace_once('\t\treturn s.dieErr\n', '\t\treturn s.closeError()\n')
 path.write_text(source, encoding="utf-8")
-print("Patched vendored sing-anytls Stream shutdown race")
+print("Patched pinned sing-anytls Stream shutdown race in Go module cache")
