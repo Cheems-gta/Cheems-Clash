@@ -5,7 +5,7 @@ by its included GPL components. The license text is in LICENSE. Corresponding
 application source, vendored Go sources and dependency license files accompany
 the preview in the source archive. Build scripts and exact commit ID are included.
 
-GPL-3.0-or-later components include anytls/sing-anytls, sagernet/sing-vmess,
+The vendored github.com/anytls/sing-anytls v0.0.13 session/stream.go is\nlocally modified by scripts/patch_anytls_stream.py to publish stream close errors\natomically during concurrent network writes and connection shutdown. The\ncorresponding modified source is included in the source archive.\n\nGPL-3.0-or-later components include anytls/sing-anytls, sagernet/sing-vmess,
 sagernet/sing-shadowsocks, sagernet/sing-quic and adapted Reality client logic.
 Reality protocol/client references: XTLS/REALITY and
 SagerNet/sing-box common/tls/reality_client.go. See the pinned Core source docs/REALITY_IMPLEMENTATION.md.
