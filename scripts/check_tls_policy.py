@@ -9,8 +9,8 @@ assert "Subscription.parse(file.readText())" in controller
 assert "withoutCertificateChecks()" not in controller
 assert '.putExtra("hy2.allowUnverifiedTls", true)' in controller, "Requested compatibility mode must be enabled"
 assert "allowUnverifiedTls.value" not in controller, "No stale opt-in setting may override the requested mode"
-assert "TLS 服务器证书验证已关闭" in ui, "Warn on home screen"
-assert "中间人攻击" in ui, "Show risk warning"
+assert "TLS 服务器证书验证已关闭" not in ui, "Obsolete home warning must be removed"
+assert "此版本不会验证 TLS 服务器身份" not in ui, "Obsolete settings warning must be removed"
 assert 'getBooleanExtra("hy2.allowUnverifiedTls", false)' in service, "Service must read intent flag"
 assert "allowUnverifiedTLS, customCAPEM, this)" in service, "Flag must reach native Core"
 assert 'allowUnverifiedTLS ? "" : node.certificateSHA256()' in native, "Native Core must disable pin validation"
