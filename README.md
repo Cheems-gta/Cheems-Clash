@@ -1,15 +1,34 @@
-# Cheems Clash
+# Cheems Clash — Cheems Core edition
 
-Android Kotlin/Compose client with an embedded Mihomo v1.19.34 core, built from pinned source (0455d0d28c4526937380505153e65a843d8612e8) using gomobile. GPL-3.0; see LICENSE and upstream https://github.com/MetaCubeX/mihomo.
+Android client using a single Cheems Core engine. The application contains no
+Mihomo engine, JNI bridge, service, controller API, build input or fallback.
+Application ID: `com.cheems.clash`; Android 9+; arm64-v8a and x86_64.
 
-## v0.2 beta
+## Current behavior
 
-Import a Clash/Mihomo YAML file or an HTTPS subscription in 配置, then connect and accept Android's VPN prompt. The existing active VPN will be replaced by Android. 节点 lists strategy groups; manual selector groups support switching. Speed values come from the core. Configurations are private, excluded from backups, and not uploaded to this repository. A subscription must return YAML, not a web page or Base64 node list.
+Import node YAML (`proxies`), Base64 lists or node sharing URIs; choose a node;
+authorize Android VPN and connect. Selecting another node closes the previous
+VPN before establishing the new connection. Subscription usage and timed updates
+are retained. Updates are deferred while connected and run while the app process
+is alive; this is not an OS-scheduled background updater.
 
-IPv4 TUN with gVisor; Android blocks IPv6 while the VPN is active. The app itself bypasses the VPN for bootstrap/subscription/provider access. Imported listeners, controllers and routing configuration are overridden to avoid conflicts with Android. Provider/GeoIP downloads may be needed on first connection. Core startup does not prove that your remote proxy is reachable.
+This edition uses global routing, not subscription rule/group evaluation.
+Native VPN adapters: AnyTLS, Hysteria 2, VLESS, VMess, Shadowsocks 2022, TUIC v5,
+and SOCKS5, subject to each adapter's supported options. Incomplete transports are
+shown with an explicit reason and cannot be selected for global VPN. AnyTLS has
+TCP and DNS-over-TCP fallback, not general UDP. The connection compatibility
+policy currently skips conventional node TLS certificate verification; Reality
+protocol authentication remains enabled. Do not interpret import or a running
+VPN interface as proof every provider endpoint works.
 
-Supported ABIs: arm64-v8a and x86_64. Minimum Android 8. This is a debug-signed beta; different CI runs may have different debug keys, so an existing preview might need uninstalling before installation (export your configuration first).
+## Reproducible build
 
-## Reproduce
+`.github/workflows/android.yml` pins the Core source revision and gomobile,
+runs native/unit tests, produces the APK, checks signatures and 16 KiB alignment,
+and runs an Android emulator test of actual TUN forwarding and service lifecycle.
+The host SOCKS fixture produces its marker only through the proxy; direct traffic
+cannot satisfy the test. No real subscription secrets are needed in CI.
 
-See `.github/workflows/android.yml`: JDK 17, Gradle 8.9, SDK 35, NDK 27.2.12479018, Go 1.26. Clone the pinned Mihomo tag into `mihomo-src`, build `native` into `app/libs/core.aar`, then run `gradle :app:assembleDebug`. Complete corresponding source for the embedded core is available at the pinned upstream commit; this repository contains the Android client, glue and build instructions.
+GPL-3.0; see LICENSE and THIRD_PARTY_NOTICES.md. The build packages dependency
+notices and the native dependency version manifest in APK assets. Full pinned
+native source is linked in `integration/CORE_MIGRATION.md`.

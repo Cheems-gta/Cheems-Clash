@@ -12,3 +12,6 @@ dependencies {
     implementation("org.yaml:snakeyaml:2.3")
 
 }
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+}

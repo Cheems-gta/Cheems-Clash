@@ -19,6 +19,14 @@ import win.cheems.core.net.LocalProxyProbe;
 public final class CoreService extends VpnService {
   private static final String ACTION_STOP_VPN = "win.cheems.core.STOP_VPN";
   public static volatile Node selected;
+  public static volatile boolean serviceAlive;
+  private static final java.util.concurrent.ExecutorService SERIAL =
+      java.util.concurrent.Executors.newSingleThreadExecutor();
+
+  public static long verifyForwarding() throws IOException {
+    if (!tunnelEstablished) throw new IOException("请先连接 VPN");
+    return LocalProxyProbe.check(localHttpPassword).elapsedMs;
+  }
   static volatile ProxyCore core;
   public static volatile boolean connecting;
   public static volatile boolean tunnelEstablished;
@@ -66,7 +74,7 @@ public final class CoreService extends VpnService {
         PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     return new Notification.Builder(this, "core")
         .setSmallIcon(getResources().getIdentifier("ic_notification", "drawable", getPackageName()))
-        .setContentTitle("Cheems Core · VPN")
+        .setContentTitle("Cheems Clash · Cheems Core")
         .setContentText(message)
         .setContentIntent(open)
         .addAction(android.R.drawable.ic_menu_close_clear_cancel, "停止 VPN", stop)
@@ -122,6 +130,7 @@ public final class CoreService extends VpnService {
   public void onCreate() {
     super.onCreate();
     destroyed = false;
+    serviceAlive = true;
     tunnelEstablished = false;
     forwardingVerified = false;
     byte[] secret = new byte[32];
@@ -173,7 +182,7 @@ public final class CoreService extends VpnService {
     final String customCAPEM =
         intent == null ? null : intent.getStringExtra("hy2.trustedCaPem");
     final Node node = selected;
-    new Thread(
+    SERIAL.execute(
             () -> {
               try {
                 if (node == null || !node.supported()) {
@@ -257,9 +266,7 @@ public final class CoreService extends VpnService {
                 // request, leaving an indefinite foreground VPN notification.
                 stopSelf();
               }
-            },
-            "cheems-connect")
-        .start();
+            });
     return START_NOT_STICKY;
   }
 
@@ -302,7 +309,7 @@ public final class CoreService extends VpnService {
     markStage("选择 VPN 底层网络");
     physicalNetwork=choosePhysicalNetwork();
     if(physicalNetwork==null) throw new IOException("No physical internet network available");
-    Builder builder=new Builder().setSession("Cheems Core")
+    Builder builder=new Builder().setSession("Cheems Clash")
         .setMtu(1500)
         .addAddress("10.77.0.1",30)
         .addAddress("fd77:77::1",126)
@@ -337,7 +344,8 @@ public final class CoreService extends VpnService {
     destroyed = true;
     Thread watcher = connectionMonitor;
     if (watcher != null) watcher.interrupt();
-    updateConnecting(false);
+    connecting = true;
+    SERIAL.execute(() -> {
     if (ownedCore != null) ownedCore.stop();
     try { if(Hysteria2Native.isPackaged()) Hysteria2Native.stopTunnel(); }
     catch(Exception e) { log("TUN关闭异常"); }
@@ -357,6 +365,9 @@ public final class CoreService extends VpnService {
       log("原生连接关闭异常");
     }
     finishStage(lastFailure == null ? "用户或系统已停止 VPN" : "启动或连接失败，服务已关闭");
+    connecting = false;
+    serviceAlive = false;
+    });
     stopForeground(STOP_FOREGROUND_REMOVE);
     super.onDestroy();
   }
