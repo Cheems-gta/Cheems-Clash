@@ -10,5 +10,5 @@ android {
 }
 dependencies {
     implementation("org.yaml:snakeyaml:2.3")
-    implementation(files("libs/cheems-quic.aar"))
+
 }
