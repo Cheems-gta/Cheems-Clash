@@ -115,6 +115,12 @@ public final class CoreService extends VpnService {
               log("隧道诊断：" + diagnostic);
             }
             if (!Hysteria2Native.isRunning()) {
+              String finalDiagnostic = Hysteria2Native.tunnelLastError();
+              lastFailure = "Making 原生连接中断；请查看断线诊断";
+              log("VPN 断线诊断：原生节点已停止；TUN="
+                  + tunnelEstablished + "；TCP预检=" + forwardingVerified
+                  + "；底层网络=" + (choosePhysicalNetwork() == null ? "不可用" : "可用"));
+              if (!finalDiagnostic.isEmpty()) log("VPN 断线诊断：" + finalDiagnostic);
               log("原生节点连接已中断，正在关闭失效代理");
               stopSelf();
               return;
