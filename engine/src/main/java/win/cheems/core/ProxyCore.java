@@ -160,7 +160,7 @@ public final class ProxyCore {
           reply(client, "502 Bad Gateway");
         } catch (Exception ignored) {
         }
-        listener.onUpdate("连接未完成（" + e.getClass().getSimpleName() + "），未回退直连");
+        listener.onUpdate("连接未完成（" + e.getClass().getSimpleName() + "：" + String.valueOf(e.getMessage()) + "），未回退直连");
       }
     } finally {
       if (tunnel != null)
