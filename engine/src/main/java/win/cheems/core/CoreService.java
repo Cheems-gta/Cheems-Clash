@@ -168,6 +168,8 @@ public final class CoreService extends VpnService {
             log("上次进程异常退出：原因代码 " + reason
                 + "；时间 " + new java.util.Date(exit.getTimestamp())
                 + "；状态 " + exit.getStatus());
+            if (reason == android.app.ApplicationExitInfo.REASON_CRASH_NATIVE)
+              logNativeCrashFrames(exit);
           }
         }
         if (newest > lastSeen)
@@ -181,6 +183,43 @@ public final class CoreService extends VpnService {
       log("检测到上次 VPN 启动异常中断；最后阶段：" +
           previous.getString("last_stage", "未知") + "。请复制运行记录。");
       previous.edit().putBoolean("pending", false).apply();
+    }
+  }
+
+  // Record only native library/symbol names from the Android tombstone. Never
+  // expose raw tombstone text: it may contain node credentials or user data.
+  private static void logNativeCrashFrames(android.app.ApplicationExitInfo exit) {
+    try (java.io.InputStream stream = exit.getTraceInputStream()) {
+      if (stream == null) {
+        log("原生崩溃堆栈不可用：请通过 Android 错误报告获取详细堆栈");
+        return;
+      }
+      java.io.BufferedReader reader = new java.io.BufferedReader(
+          new java.io.InputStreamReader(stream, java.nio.charset.StandardCharsets.UTF_8));
+      String line;
+      int inspected = 0;
+      int frames = 0;
+      while ((line = reader.readLine()) != null && inspected++ < 2500 && frames < 12) {
+        String trimmed = line.trim();
+        if (!trimmed.matches("#[0-9]{2}\\\\s+pc\\\\s+.*")) continue;
+        // Keep only the library basename and a short symbol identifier.
+        String library = "unknown";
+        java.util.regex.Matcher match = java.util.regex.Pattern
+            .compile("/([^/\\\\s]+\\\\.so)(?:\\\\s|$)").matcher(trimmed);
+        if (match.find()) library = match.group(1);
+        String symbol = "";
+        int open = trimmed.indexOf('(');
+        int close = open < 0 ? -1 : trimmed.indexOf(')', open);
+        if (open >= 0 && close > open) {
+          String candidate = trimmed.substring(open + 1, close);
+          if (candidate.matches("[A-Za-z0-9_.$+:/<>-]{1,100}")) symbol = candidate;
+        }
+        log("原生崩溃帧 " + frames + "：" + library + (symbol.isEmpty() ? "" : " · " + symbol));
+        frames++;
+      }
+      if (frames == 0) log("原生崩溃堆栈未包含可识别的调用帧");
+    } catch (Exception ignored) {
+      log("原生崩溃堆栈读取失败");
     }
   }
 
