@@ -100,7 +100,7 @@ private fun downloadProfile(link: String): SubscriptionDownload {
                     if (index == clientIds.lastIndex) {
                         error("订阅服务器返回 HTTP $code（已尝试兼容请求头）")
                     }
-                    break
+                    return@repeat
                 }
             } finally {
                 conn.disconnect()
