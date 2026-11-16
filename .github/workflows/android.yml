@@ -1,4 +1,4 @@
-name: Cheems Core APK
+name: Doreena Android APK
 on:
   push:
     branches: [main, cheems-core-only]
@@ -6,7 +6,7 @@ on:
     branches: [main]
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 concurrency:
   group: core-apk-${{ github.ref }}
   cancel-in-progress: true
@@ -101,7 +101,7 @@ jobs:
       - name: Prepare tested APK and corresponding source
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/Cheems-Clash-v0.3.0-Core-only.apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist/Doreena-v0.3.0-preview.apk
           (cd core-source/native/quic && go mod vendor)
           grep -q 'atomic.Pointer\[streamCloseError\]' core-source/native/quic/vendor/github.com/anytls/sing-anytls/session/stream.go
           tar --exclude=.git --exclude=.gradle --exclude=dist --exclude='*/build' --exclude='*.aar' --exclude='*.apk' -czf dist/Cheems-Clash-v0.3.0-Core-only-source.tar.gz .
@@ -112,6 +112,18 @@ jobs:
           name: Cheems-Clash-Core-only-tested
           path: dist/*
           if-no-files-found: error
+      - name: Publish Doreena preview APK to GitHub Releases
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/cheems-core-only'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="doreena-v0.3.0-preview-${GITHUB_SHA:0:8}"
+          gh release create "$tag" dist/Doreena-v0.3.0-preview.apk dist/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Doreena v0.3.0 Preview (${GITHUB_SHA:0:8})" \
+            --notes "Doreena blue-white cat icon and Making-branded UI. CI Android TUN lifecycle test passed. Preview/debug signed; real-device node stability remains unverified." \
+            --prerelease
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
