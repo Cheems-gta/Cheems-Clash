@@ -15,281 +15,382 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import core.Core
 import kotlinx.coroutines.*
-import org.json.JSONObject
+import org.json.JSONArray
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
+import win.cheems.core.CheemsBridge
 
 private val Green = Color(0xFF73F5A2)
 private val Background = Color(0xFF090E13)
 private val Panel = Color(0xFF1B252B)
-private const val MaxConfig = 4 * 1024 * 1024
+private const val MaxConfig = 2 * 1024 * 1024
 
 class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); runCatching { VpnDiagnostics.inspectPreviousExit(this) }; setContent { CheemsApp() } }
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent { CheemsApp() }
+    }
 }
 
-private fun saveProfile(dir: File, bytes: ByteArray) {
-    require(bytes.isNotEmpty() && bytes.size <= MaxConfig) { "配置为空或超过 4 MB" }
-    val text = bytes.toString(Charsets.UTF_8)
-    require(!text.trimStart().startsWith("<")) { "下载结果是网页，请使用 Clash/Mihomo YAML 订阅链接" }
-    require(Regex("(?m)^\\s*(proxies|proxy-providers|rules|proxy-groups)\\s*:").containsMatchIn(text)) {
-        "需要 Clash/Mihomo YAML 配置，暂不支持 Base64 节点列表"
+private data class NodeRow(val index: Int, val name: String, val protocol: String, val supported: Boolean, val reason: String)
+private data class Download(val text: String, val usage: String?)
+
+private fun parseNodes(text: String): List<NodeRow> {
+    if (text.isBlank()) return emptyList()
+    val data = JSONArray(CheemsBridge.listNodes(text))
+    return (0 until data.length()).map { i ->
+        val row = data.getJSONObject(i)
+        NodeRow(row.getInt("index"), row.optString("name"), row.optString("protocol"),
+            row.optBoolean("supported"), row.optString("reason"))
     }
-    val temp = File(dir,"profile.tmp")
-    temp.writeBytes(bytes)
-    check(temp.renameTo(File(dir,"profile.yaml"))) { "保存配置失败" }
 }
-private data class SubscriptionDownload(val bytes: ByteArray, val usage: String?)
+
+private fun InputStream.limitedBytes(): ByteArray {
+    val buffer = ByteArray(8192)
+    val out = ByteArrayOutputStream()
+    while (true) {
+        val count = read(buffer)
+        if (count < 0) break
+        require(out.size() + count <= MaxConfig) { "订阅超过 2 MB，请精简配置" }
+        out.write(buffer, 0, count)
+    }
+    return out.toByteArray()
+}
+
+private fun storeProfile(dir: File, text: String) {
+    require(text.isNotBlank() && text.toByteArray(Charsets.UTF_8).size <= MaxConfig) { "配置为空或超过 2 MB" }
+    require(parseNodes(text).isNotEmpty()) { "没有找到可识别的节点" }
+    val temp = File(dir, "profile.tmp")
+    temp.writeText(text, Charsets.UTF_8)
+    val target = File(dir, "profile.yaml")
+    if (!temp.renameTo(target)) {
+        temp.delete()
+        error("无法保存订阅配置")
+    }
+}
+
 private fun parseUsage(header: String?): String? {
     if (header.isNullOrBlank()) return null
     val values = header.split(';').mapNotNull { entry ->
         val pair = entry.trim().split('=', limit = 2)
-        if (pair.size != 2) null else pair[1].trim().toLongOrNull()?.let { pair[0].trim().lowercase(Locale.US) to it }
+        if (pair.size == 2) pair[1].toLongOrNull()?.let { pair[0].trim().lowercase(Locale.US) to it } else null
     }.toMap()
-    val uploaded = values["upload"] ?: return null
-    val downloaded = values["download"] ?: return null
     val total = values["total"] ?: return null
-    fun gb(bytes: Long) = String.format(Locale.US, "%.2f GB", bytes / 1073741824.0)
-    val used = uploaded + downloaded
-    val expiry = values["expire"]?.takeIf { it > 0 }?.let {
-        java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(java.util.Date(it * 1000))
-    } ?: "未提供"
-    return "已用 ${gb(used)} · 剩余 ${gb((total-used).coerceAtLeast(0))}\n总量 ${gb(total)} · 到期 $expiry"
+    val used = (values["upload"] ?: 0L) + (values["download"] ?: 0L)
+    fun gigabytes(bytes: Long) = String.format(Locale.US, "%.2f GB", bytes / 1073741824.0)
+    val expires = values["expire"]?.takeIf { it > 0 }?.let {
+        java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(java.util.Date(it * 1000L))
+    } ?: "未知"
+    return "已用 " + gigabytes(used) + " · 剩余 " + gigabytes((total - used).coerceAtLeast(0)) +
+        "\n总量 " + gigabytes(total) + " · 到期 " + expires
 }
-private fun downloadProfile(link: String): SubscriptionDownload {
-    var url = URL(link.trim())
+
+private fun downloadProfile(address: String): Download {
+    var url = URL(address.trim())
     repeat(6) {
-        require(url.protocol == "https") { "订阅链接及跳转地址必须使用 HTTPS" }
-        val conn = url.openConnection() as HttpURLConnection
+        require(url.protocol == "https") { "订阅链接及跳转地址必须是 HTTPS" }
+        val connection = url.openConnection() as HttpURLConnection
         try {
-            conn.instanceFollowRedirects = false; conn.connectTimeout=15000; conn.readTimeout=20000
-            conn.setRequestProperty("User-Agent","Clash.Meta/Cheems-Clash")
-            val code=conn.responseCode
-            if (code in 300..399) { url=URL(url,conn.getHeaderField("Location") ?: error("订阅跳转缺少地址")) }
-            else {
-                require(code in 200..299) { "订阅服务器返回 HTTP $code" }
-                return SubscriptionDownload(conn.inputStream.use { it.readBytesLimited() }, parseUsage(conn.getHeaderField("subscription-userinfo")))
+            connection.instanceFollowRedirects = false
+            connection.connectTimeout = 15000
+            connection.readTimeout = 20000
+            connection.setRequestProperty("User-Agent", "Cheems-Core/0.3")
+            val code = connection.responseCode
+            if (code in 300..399) {
+                val next = connection.getHeaderField("Location") ?: error("订阅跳转缺少地址")
+                url = URL(url, next)
+            } else {
+                require(code in 200..299) { "订阅服务器响应 HTTP " + code }
+                val bytes = connection.inputStream.use { it.limitedBytes() }
+                return Download(bytes.toString(Charsets.UTF_8), parseUsage(connection.getHeaderField("subscription-userinfo")))
             }
-        } finally { conn.disconnect() }
+        } finally {
+            connection.disconnect()
+        }
     }
-    error("订阅跳转次数过多")
+    error("订阅重定向次数过多")
 }
-private fun java.io.InputStream.readBytesLimited(): ByteArray {
-    val out=java.io.ByteArrayOutputStream(); val buffer=ByteArray(8192)
-    while(true) { val n=read(buffer); if(n<0) break; require(out.size()+n<=MaxConfig) { "配置超过 4 MB" }; out.write(buffer,0,n) }
-    return out.toByteArray()
-}
-private fun speed(value: Long): String = when {
-    value>=1024*1024 -> String.format(Locale.US,"%.1f MB/s",value/1048576.0)
-    value>=1024 -> String.format(Locale.US,"%.1f KB/s",value/1024.0)
-    else -> "$value B/s"
+
+private fun speed(bytes: Long): String = when {
+    bytes >= 1048576 -> String.format(Locale.US, "%.1f MB/s", bytes / 1048576.0)
+    bytes >= 1024 -> String.format(Locale.US, "%.1f KB/s", bytes / 1024.0)
+    else -> bytes.toString() + " B/s"
 }
 
 @Composable
 fun CheemsApp() {
-    val context=LocalContext.current
-    val scope=rememberCoroutineScope()
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("profile", 0) }
+    val scope = rememberCoroutineScope()
     var tab by remember { mutableIntStateOf(0) }
-    val running by VpnState.running.collectAsState()
-    val busy by VpnState.busy.collectAsState()
-    val status by VpnState.status.collectAsState()
-    val error by VpnState.error.collectAsState()
-    val startupMetrics by VpnState.startupMetrics.collectAsState()
-    var hasProfile by remember { mutableStateOf(File(context.filesDir,"profile.yaml").isFile) }
+    var profile by remember { mutableStateOf(runCatching { File(context.filesDir, "profile.yaml").takeIf { it.isFile }?.readText() ?: "" }.getOrDefault("")) }
+    val nodes = remember(profile) { runCatching { parseNodes(profile) }.getOrDefault(emptyList()) }
+    var selected by remember { mutableIntStateOf(prefs.getInt("core_selected_index", 0)) }
+    var url by remember { mutableStateOf(prefs.getString("url", "") ?: "") }
+    var autoRefresh by remember { mutableStateOf(prefs.getBoolean("auto_refresh", true)) }
+    var refreshMinutes by remember { mutableStateOf(prefs.getInt("refresh_minutes", 60).toString()) }
+    var usage by remember { mutableStateOf(prefs.getString("usage", null)) }
     var importing by remember { mutableStateOf(false) }
-    var subscriptionUsage by remember { mutableStateOf(context.getSharedPreferences("profile",0).getString("usage",null)) }
-    var refreshMinutes by remember { mutableStateOf(context.getSharedPreferences("profile",0).getInt("refresh_minutes",60).toString()) }
-    var autoRefresh by remember { mutableStateOf(context.getSharedPreferences("profile",0).getBoolean("auto_refresh",true)) }
+    var status by remember { mutableStateOf("尚未连接") }
+    var running by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
-    var url by remember { mutableStateOf(context.getSharedPreferences("profile",0).getString("url","") ?: "") }
-    var up by remember { mutableLongStateOf(0) }; var down by remember { mutableLongStateOf(0) }
-    var proxies by remember { mutableStateOf(JSONObject()) }
-    var group by remember { mutableStateOf<String?>(null) }
-    var delayMessage by remember { mutableStateOf("") }
-    var diagnosticLog by remember { mutableStateOf(VpnDiagnostics.history(context)) }
-    fun start() { context.startForegroundService(Intent(context,ClashVpnService::class.java)) }
-    val vpnPermission=rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        if(it.resultCode==Activity.RESULT_OK) start() else message="未授权 VPN，连接未启动"
+    var diagnostics by remember { mutableStateOf("") }
+    var upSpeed by remember { mutableLongStateOf(0L) }
+    var downSpeed by remember { mutableLongStateOf(0L) }
+
+    fun connect() {
+        runCatching {
+            check(profile.isNotBlank()) { "请先导入节点" }
+            CheemsBridge.connect(context, profile, selected)
+            busy = true
+            status = "正在连接…"
+            message = "正在启动独立 Cheems Core 内核"
+        }.onFailure { message = it.message ?: "无法启动连接"; busy = false }
     }
-    val notifications=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-    LaunchedEffect(Unit) { if(Build.VERSION.SDK_INT>=33) notifications.launch(Manifest.permission.POST_NOTIFICATIONS) }
-    val openFile=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if(uri!=null && !running && !busy) scope.launch {
-            importing=true
-            try { withContext(Dispatchers.IO) { context.contentResolver.openInputStream(uri)!!.use { saveProfile(context.filesDir,it.readBytesLimited()) } }; hasProfile=true; message="配置已导入，可以连接" }
-            catch(e:Exception) { message=e.message ?: "导入失败" }
-            finally { importing=false }
-        }
+
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (it.resultCode == Activity.RESULT_OK) connect()
+        else message = "未授予 VPN 权限"
     }
-    LaunchedEffect(autoRefresh,refreshMinutes,running,busy,url,importing) {
-        val minutes=refreshMinutes.toLongOrNull()
-        if(!autoRefresh || minutes==null || minutes<5 || url.isBlank() || running || busy || importing) return@LaunchedEffect
-        while(true) {
-            delay(60_000L)
-            val prefs=context.getSharedPreferences("profile",0)
-            val last=prefs.getLong("last_refresh",0L)
-            if(System.currentTimeMillis()-last < minutes*60_000L) continue
-            prefs.edit().putLong("last_refresh",System.currentTimeMillis()).apply()
-            importing=true
+    val notifyPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= 33) notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+    val openFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null && !running && !busy) scope.launch {
+            importing = true
             try {
-                val result=withContext(Dispatchers.IO) { downloadProfile(url).also { saveProfile(context.filesDir,it.bytes) } }
-                subscriptionUsage=result.usage
-                prefs.edit().putString("url",url.trim()).putString("usage",result.usage).apply()
-                hasProfile=true
-                message="订阅已自动更新"
-            } catch(e:Exception) {
-                message="自动更新失败，已保留旧配置：${e.message}"
-            } finally { importing=false }
+                val text = withContext(Dispatchers.IO) {
+                    val data = context.contentResolver.openInputStream(uri)?.use { it.limitedBytes() }
+                        ?: error("无法读取所选文件")
+                    val result = data.toString(Charsets.UTF_8)
+                    storeProfile(context.filesDir, result)
+                    result
+                }
+                profile = text
+                selected = 0
+                prefs.edit().putInt("core_selected_index", 0).apply()
+                message = "导入完成，已识别 " + nodes.size + " 个节点"
+            } catch (e: Exception) { message = e.message ?: "导入失败" }
+            finally { importing = false }
         }
     }
-    LaunchedEffect(running) {
-        up=0; down=0
-        while(running) {
-            val result=withContext(Dispatchers.IO) { runCatching { JSONObject(Core.traffic()) to JSONObject(Core.proxies()) }.getOrNull() }
-            if(result!=null) { up=result.first.optLong("up"); down=result.first.optLong("down"); proxies=result.second }
-            delay(1000)
+
+    LaunchedEffect(Unit) {
+        var previousUp = 0L
+        var previousDown = 0L
+        while (true) {
+            status = CheemsBridge.status()
+            running = CheemsBridge.running()
+            busy = CheemsBridge.connecting()
+            val currentUp = CheemsBridge.up()
+            val currentDown = CheemsBridge.down()
+            upSpeed = (currentUp - previousUp).coerceAtLeast(0L)
+            downSpeed = (currentDown - previousDown).coerceAtLeast(0L)
+            previousUp = currentUp
+            previousDown = currentDown
+            delay(1000L)
         }
     }
-    MaterialTheme(colorScheme=darkColorScheme(primary=Green,background=Background,surface=Panel)) {
+    LaunchedEffect(autoRefresh, refreshMinutes, url, running, busy, importing) {
+        val interval = refreshMinutes.toLongOrNull()
+        if (!autoRefresh || interval == null || interval !in 5L..10080L || url.isBlank() || running || busy || importing) return@LaunchedEffect
+        while (true) {
+            delay(60000L)
+            if (System.currentTimeMillis() - prefs.getLong("last_refresh", 0L) < interval * 60000L) continue
+            importing = true
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    downloadProfile(url).also { storeProfile(context.filesDir, it.text) }
+                }
+                profile = result.text
+                usage = result.usage
+                prefs.edit().putString("url", url.trim()).putString("usage", usage)
+                    .putLong("last_refresh", System.currentTimeMillis()).apply()
+                message = "订阅已自动更新"
+            } catch (e: Exception) {
+                message = "自动更新失败，保留原配置：" + (e.message ?: "未知错误")
+            } finally { importing = false }
+        }
+    }
+
+    MaterialTheme(colorScheme = darkColorScheme(primary = Green, background = Background, surface = Panel)) {
         Column(Modifier.fillMaxSize().background(Background).systemBarsPadding().padding(20.dp)) {
-            Text("CHEEMS  /  CLASH",color=Green,fontSize=14.sp,fontWeight=FontWeight.Bold)
+            Text("CHEEMS  /  CLASH", color = Green, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
-            Text(listOf("控制台","节点","配置","设置")[tab],color=Color.White,fontSize=30.sp,fontWeight=FontWeight.Bold)
-            Spacer(Modifier.height(24.dp))
+            Text(listOf("控制台", "节点", "配置", "设置")[tab], color = Color.White,
+                fontSize = 30.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(18.dp))
             Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
-                if(message.isNotEmpty()) { Text(message,color=Green); Spacer(Modifier.height(12.dp)) }
-                when(tab) {
+                if (message.isNotEmpty()) { Text(message, color = Green); Spacer(Modifier.height(12.dp)) }
+                when (tab) {
                     0 -> {
                         PanelCard {
-                            Text("连接状态",color=Color.LightGray); Spacer(Modifier.height(18.dp))
-                            Text(status,color=Green,fontSize=27.sp,fontWeight=FontWeight.Bold)
-                            Spacer(Modifier.height(8.dp)); Text("Mihomo · Android VPN",color=Color.LightGray,fontSize=12.sp)
-                            if(error.isNotEmpty()) { Spacer(Modifier.height(10.dp)); Text(error,color=Color(0xFFFFB4AB)) }
-                            Spacer(Modifier.height(22.dp))
-                            Button(onClick={
-                                if(running) context.startService(Intent(context,ClashVpnService::class.java).setAction("STOP"))
-                                else if(!hasProfile) { tab=2; message="请先导入配置" }
-                                else {
-                                    val request=VpnService.prepare(context)
-                                    if(request==null) start() else vpnPermission.launch(request)
+                            Text("连接状态", color = Color.LightGray)
+                            Spacer(Modifier.height(14.dp))
+                            Text(status, color = Green, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(8.dp))
+                            Text("Cheems Core · 独立原生内核（不含 Mihomo）", color = Color.LightGray, fontSize = 12.sp)
+                            Spacer(Modifier.height(20.dp))
+                            Button(onClick = {
+                                if (running || busy) {
+                                    CheemsBridge.disconnect(context)
+                                    message = "正在断开 VPN"
+                                } else if (nodes.isEmpty()) {
+                                    tab = 2; message = "请先导入配置"
+                                } else {
+                                    val intent = VpnService.prepare(context)
+                                    if (intent == null) connect() else permission.launch(intent)
                                 }
-                            },enabled=!busy&&!importing,modifier=Modifier.fillMaxWidth().height(56.dp)) { Text(if(busy) "处理中…" else if(running) "断开连接" else "连接") }
+                            }, enabled = !importing, modifier = Modifier.fillMaxWidth().height(56.dp)) {
+                                Text(if (busy) "断开正在连接的 VPN" else if (running) "断开连接" else "连接")
+                            }
                         }
                         Spacer(Modifier.height(14.dp))
                         PanelCard {
-                            Text("实时流量",color=Color.White,fontWeight=FontWeight.Bold); Spacer(Modifier.height(16.dp))
-                            Text("↑ ${speed(up)}     ↓ ${speed(down)}",color=Green,fontSize=18.sp)
-                            Spacer(Modifier.height(8.dp)); Text(if(running) "VPN 已启动，流量由内核统计" else "尚未启动 VPN 服务",color=Color.LightGray)
+                            Text("实时流量", color = Color.White, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(16.dp))
+                            Text("↑ " + speed(upSpeed) + "    ↓ " + speed(downSpeed), color = Green, fontSize = 17.sp)
+                            Spacer(Modifier.height(10.dp))
+                            Text(if (running) "Android VPN 隧道已启动" else "当前没有活动的 VPN 隧道",
+                                color = Color.LightGray, fontSize = 12.sp)
+                        }
+                        Spacer(Modifier.height(14.dp))
+                        PanelCard {
+                            Text("当前节点", color = Green, fontWeight = FontWeight.Bold)
+                            Text(nodes.firstOrNull { it.index == selected }?.name ?: "未选择", color = Color.White)
+                            Text("兼容设置：TLS 证书验证已跳过（Reality 不受此设置影响）",
+                                color = Color.LightGray, fontSize = 12.sp)
                         }
                     }
                     1 -> {
-                        if(!running) PanelCard { Text("连接后显示节点与策略组",color=Color.LightGray) }
-                        else {
-                            Text(delayMessage,color=Green)
-                            proxies.keys().asSequence().toList().sorted().forEach { name ->
-                                val p=proxies.optJSONObject(name)
-                                if(p?.has("all")==true) {
-                                    PanelCard {
-                                        Text(name,color=Green,fontSize=20.sp)
-                                        Text("当前：${p.optString("now")}",color=Color.White)
-                                        Row {
-                                            TextButton(onClick={group=name},enabled=p.optString("type")=="Selector") { Text("切换节点") }
-                                            TextButton(onClick={ scope.launch {
-                                                delayMessage="正在测试 $name…"
-                                                delayMessage=withContext(Dispatchers.IO) { runCatching { "$name：${Core.delay(name)} ms" }.getOrElse { "测速失败：${it.message}" } }
-                                            } }) { Text("测速") }
-                                        }
-                                    }
-                                    Spacer(Modifier.height(12.dp))
+                        Text("已导入 " + nodes.size + " 个节点 · 连接前选择", color = Color.LightGray, fontSize = 13.sp)
+                        Spacer(Modifier.height(12.dp))
+                        nodes.forEach { node ->
+                            PanelCard {
+                                Text(node.name, color = if (selected == node.index) Green else Color.White,
+                                    fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                Text(node.protocol.uppercase(Locale.US) +
+                                    (if (node.supported) "" else " · 暂不支持"),
+                                    color = Color.LightGray, fontSize = 12.sp)
+                                if (!node.supported) Text(node.reason, color = Color(0xFFFFB4AB), fontSize = 12.sp)
+                                Spacer(Modifier.height(6.dp))
+                                OutlinedButton(onClick = {
+                                    selected = node.index
+                                    prefs.edit().putInt("core_selected_index", selected).apply()
+                                    message = "已选择：" + node.name
+                                }, enabled = node.supported && !running && !busy) {
+                                    Text(if (selected == node.index) "当前选择" else "选择节点")
                                 }
                             }
+                            Spacer(Modifier.height(10.dp))
                         }
                     }
                     2 -> PanelCard {
-                        Text("配置管理",color=Green,fontSize=21.sp,fontWeight=FontWeight.Bold)
-                        Spacer(Modifier.height(12.dp)); Text(if(hasProfile) "已保存一份配置" else "尚未导入配置",color=Color.White)
-                        Text("支持 Clash/Mihomo YAML；更换配置前请先断开。",color=Color.LightGray,fontSize=12.sp)
+                        Text("配置管理", color = Green, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(10.dp))
+                        Text("已识别 " + nodes.size + " 个节点", color = Color.White)
                         Spacer(Modifier.height(12.dp))
-                        Text("套餐流量",color=Green,fontWeight=FontWeight.Bold)
-                        Text(subscriptionUsage ?: "服务商未提供流量信息",color=Color.White,fontSize=13.sp)
+                        Text("套餐流量", color = Green, fontWeight = FontWeight.Bold)
+                        Text(usage ?: "订阅服务商未提供流量信息", color = Color.LightGray, fontSize = 13.sp)
+                        Spacer(Modifier.height(14.dp))
+                        Button(onClick = { openFile.launch(arrayOf("*/*")) },
+                            enabled = !running && !busy && !importing, modifier = Modifier.fillMaxWidth()) {
+                            Text("导入本地配置")
+                        }
                         Spacer(Modifier.height(12.dp))
-                        Button(onClick={openFile.launch(arrayOf("*/*"))},enabled=!running&&!busy&&!importing,modifier=Modifier.fillMaxWidth()) { Text("导入本地 YAML") }
-                        Spacer(Modifier.height(12.dp))
-                        OutlinedTextField(value=url,onValueChange={url=it},label={Text("HTTPS 订阅链接")},singleLine=true,enabled=!running&&!busy&&!importing,modifier=Modifier.fillMaxWidth())
-                        Spacer(Modifier.height(12.dp))
-                        Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
-                            Text("自动更新订阅",color=Color.White,modifier=Modifier.weight(1f))
-                            Switch(checked=autoRefresh,onCheckedChange={
-                                autoRefresh=it
-                                context.getSharedPreferences("profile",0).edit().putBoolean("auto_refresh",it).apply()
+                        OutlinedTextField(value = url, onValueChange = { url = it },
+                            label = { Text("HTTPS 订阅链接") }, singleLine = true,
+                            enabled = !running && !busy && !importing, modifier = Modifier.fillMaxWidth())
+                        Spacer(Modifier.height(10.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("自动更新订阅", color = Color.White, modifier = Modifier.weight(1f))
+                            Switch(checked = autoRefresh, onCheckedChange = {
+                                autoRefresh = it; prefs.edit().putBoolean("auto_refresh", it).apply()
                             })
                         }
-                        OutlinedTextField(value=refreshMinutes,onValueChange={input ->
-                            if(input.length<=5 && input.all { it.isDigit() }) {
-                                refreshMinutes=input
-                                input.toIntOrNull()?.takeIf { it in 5..10080 }?.let { valid ->
-                                    context.getSharedPreferences("profile",0).edit().putInt("refresh_minutes",valid).apply()
+                        OutlinedTextField(value = refreshMinutes, onValueChange = {
+                            if (it.length <= 5 && it.all(Char::isDigit)) {
+                                refreshMinutes = it
+                                it.toIntOrNull()?.takeIf { value -> value in 5..10080 }?.let { value ->
+                                    prefs.edit().putInt("refresh_minutes", value).apply()
                                 }
                             }
-                        },label={Text("更新间隔（分钟，5～10080）")},singleLine=true,enabled=autoRefresh,modifier=Modifier.fillMaxWidth())
-                        Text("为避免断开正在使用的 VPN，连接期间暂缓更新；断开后恢复定时检查。",color=Color.LightGray,fontSize=12.sp)
-                        Button(onClick={scope.launch {
-                            importing=true; message="正在下载订阅…"
-                            try {
-                                val result=withContext(Dispatchers.IO) { downloadProfile(url).also { saveProfile(context.filesDir,it.bytes) } }
-                                subscriptionUsage=result.usage
-                                context.getSharedPreferences("profile",0).edit().putString("url",url.trim()).putString("usage",subscriptionUsage).apply()
-                                context.getSharedPreferences("profile",0).edit().putLong("last_refresh",System.currentTimeMillis()).apply()
-                                hasProfile=true; message="订阅已更新，可以连接"
-                            } catch(e:Exception) { message=e.message ?: "订阅下载失败" }
-                            finally { importing=false }
-                        }},enabled=!running&&!busy&&!importing&&url.isNotBlank(),modifier=Modifier.fillMaxWidth()) { Text(if(importing) "正在导入…" else "更新节点 / 订阅") }
+                        }, label = { Text("更新间隔（分钟，5～10080）") },
+                            singleLine = true, enabled = autoRefresh, modifier = Modifier.fillMaxWidth())
+                        Text("VPN 连接期间暂停自动更新，避免更换正在使用的配置。",
+                            color = Color.LightGray, fontSize = 12.sp)
+                        Spacer(Modifier.height(12.dp))
+                        Button(onClick = {
+                            scope.launch {
+                                importing = true
+                                message = "正在下载订阅…"
+                                try {
+                                    val result = withContext(Dispatchers.IO) {
+                                        downloadProfile(url).also { storeProfile(context.filesDir, it.text) }
+                                    }
+                                    profile = result.text
+                                    usage = result.usage
+                                    prefs.edit().putString("url", url.trim()).putString("usage", usage)
+                                        .putLong("last_refresh", System.currentTimeMillis()).apply()
+                                    message = "订阅更新成功，已导入节点"
+                                } catch (e: Exception) {
+                                    message = e.message ?: "订阅下载失败"
+                                } finally { importing = false }
+                            }
+                        }, enabled = !running && !busy && !importing && url.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth()) {
+                            Text(if (importing) "正在更新…" else "更新节点 / 订阅")
+                        }
                     }
                     else -> PanelCard {
-                        Text("Cheems Clash",color=Green,fontSize=21.sp,fontWeight=FontWeight.Bold)
-                        Spacer(Modifier.height(12.dp)); Text("版本 0.2.7 · ${Core.version()}\n支持 arm64 / x86_64\nIPv4 VPN；IPv6 在 VPN 连接期间阻断。\n本应用自身流量不进入 VPN。",color=Color.White)
-                        Spacer(Modifier.height(18.dp))
-                        Text("VPN 稳定性诊断",color=Green,fontSize=18.sp,fontWeight=FontWeight.Bold)
-                        Spacer(Modifier.height(8.dp))
-                        Text("记录最近 35 条服务事件及系统提供的进程退出原因；不记录订阅地址或节点密钥。",color=Color.LightGray,fontSize=12.sp)
-                        TextButton(onClick={diagnosticLog=VpnDiagnostics.history(context)}) { Text("刷新诊断记录") }
-                        Text(if(diagnosticLog.isBlank()) "暂无诊断记录" else diagnosticLog,color=Color.White,fontSize=12.sp)
-                        Spacer(Modifier.height(12.dp)); Text("Mihomo 采用 GPL-3.0 许可证。源码与构建脚本：github.com/Cheems-gta/Cheems-Clash",color=Color.LightGray,fontSize=12.sp)
+                        Text("Cheems Clash", color = Green, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(12.dp))
+                        Text(CheemsBridge.version() + "\n原生支持：HY2 / AnyTLS / VLESS / VMess / SS2022 / TUIC / SOCKS5 等已实现协议。",
+                            color = Color.White, fontSize = 13.sp)
+                        Spacer(Modifier.height(14.dp))
+                        Text("证书兼容模式", color = Green, fontWeight = FontWeight.Bold)
+                        Text("你选择的模式会跳过 TLS 证书身份验证。通信依然加密，但存在服务器被冒充风险。此版本不依赖 Mihomo。",
+                            color = Color.LightGray, fontSize = 13.sp)
+                        Spacer(Modifier.height(14.dp))
+                        Text("运行诊断", color = Green, fontWeight = FontWeight.Bold)
+                        TextButton(onClick = { diagnostics = CheemsBridge.diagnostics() }) { Text("刷新记录") }
+                        Text(if (diagnostics.isEmpty()) "暂无记录" else diagnostics,
+                            color = Color.LightGray, fontSize = 12.sp)
+                        Spacer(Modifier.height(10.dp))
+                        Text("此集成版不含 Mihomo 的策略组热切换或规则引擎；新内核仅提供实际实现的协议功能。",
+                            color = Color.LightGray, fontSize = 12.sp)
                     }
                 }
             }
             Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly) {
-                listOf("主页","节点","配置","设置").forEachIndexed { index,label -> TextButton(onClick={tab=index}) { Text(label,color=if(tab==index) Green else Color.LightGray) } }
-            }
-        }
-        group?.let { name ->
-            AlertDialog(onDismissRequest={group=null},title={Text(name)},text={
-                Column(Modifier.heightIn(max=400.dp).verticalScroll(rememberScrollState())) {
-                    val all=proxies.optJSONObject(name)?.optJSONArray("all")
-                    if(all!=null) for(i in 0 until all.length()) { val node=all.getString(i)
-                        TextButton(onClick={scope.launch {
-                            val result=withContext(Dispatchers.IO) { runCatching { Core.select(name,node) } }
-                            message=if(result.isSuccess) "已切换至 $node" else "切换失败：${result.exceptionOrNull()?.message}"
-                            group=null
-                        }}) { Text(node) }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                listOf("主页", "节点", "配置", "设置").forEachIndexed { index, name ->
+                    TextButton(onClick = { tab = index }) {
+                        Text(name, color = if (tab == index) Green else Color.LightGray)
                     }
                 }
-            },confirmButton={TextButton(onClick={group=null}) { Text("关闭") }})
+            }
         }
     }
 }
+
 @Composable
 private fun PanelCard(content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxWidth().background(Panel,RoundedCornerShape(24.dp)).border(1.dp,Color(0xFF35454A),RoundedCornerShape(24.dp)).padding(22.dp),content=content)
+    Column(Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(24.dp))
+        .border(1.dp, Color(0xFF35454A), RoundedCornerShape(24.dp)).padding(22.dp),
+        content = content)
 }
