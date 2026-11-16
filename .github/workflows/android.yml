@@ -29,6 +29,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+      - name: Verify strict TLS policy is not bypassed
+        run: python3 scripts/check_tls_policy.py
       - name: Build and test pinned Core native engine
         run: |
           sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
