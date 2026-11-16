@@ -7,11 +7,17 @@ Fail closed if upstream sources change, instead of silently skipping the fix.
 The source archive must contain the patched dependency as vendored source.
 """
 from pathlib import Path
+import shutil
 import stat
 import subprocess
 
 module_cache = Path(subprocess.check_output(["go", "env", "GOMODCACHE"], text=True).strip())
-path = module_cache / "github.com/anytls/sing-anytls@v0.0.13/session/stream.go"
+module = module_cache / "github.com/anytls/sing-anytls@v0.0.13"
+copy = Path("core-source/native/quic/third_party/sing-anytls")
+if copy.exists():
+    raise RuntimeError("unexpected pre-existing patched AnyTLS module")
+shutil.copytree(module, copy)
+path = copy / "session/stream.go"
 path.chmod(path.stat().st_mode | stat.S_IWUSR)
 source = path.read_text(encoding="utf-8")
 
@@ -51,4 +57,4 @@ replace_once('\t\ts.dieErr = net.ErrClosed\n', '\t\ts.dieErr.Store(&streamCloseE
 replace_once('\t\ts.dieErr = err\n', '\t\ts.dieErr.Store(&streamCloseError{err: err})\n')
 replace_once('\t\treturn s.dieErr\n', '\t\treturn s.closeError()\n')
 path.write_text(source, encoding="utf-8")
-print("Patched pinned sing-anytls Stream shutdown race in Go module cache")
+print("Patched project-local sing-anytls Stream shutdown race")
