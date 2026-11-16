@@ -157,7 +157,7 @@ fun CheemsApp() {
             CheemsBridge.connect(context, profile, selected)
             busy = true
             status = "正在连接…"
-            message = "正在启动独立 Cheems Core 内核"
+            message = "正在启动 Making 内核"
         }.onFailure { message = it.message ?: "无法启动连接"; busy = false }
     }
 
@@ -243,7 +243,7 @@ fun CheemsApp() {
                             Spacer(Modifier.height(14.dp))
                             Text(status, color = Green, fontSize = 23.sp, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(8.dp))
-                            Text("Cheems Core · 独立原生内核（不含 Mihomo）", color = Color.LightGray, fontSize = 12.sp)
+                            Text("Making · 独立原生内核（不含 Mihomo）", color = Color.LightGray, fontSize = 12.sp)
                             Spacer(Modifier.height(20.dp))
                             Button(onClick = {
                                 if (running || busy) {
@@ -272,8 +272,6 @@ fun CheemsApp() {
                         PanelCard {
                             Text("当前节点", color = Green, fontWeight = FontWeight.Bold)
                             Text(nodes.firstOrNull { it.index == selected }?.name ?: "未选择", color = Color.White)
-                            Text("兼容设置：TLS 证书验证已跳过（Reality 不受此设置影响）",
-                                color = Color.LightGray, fontSize = 12.sp)
                         }
                     }
                     1 -> {
@@ -357,14 +355,11 @@ fun CheemsApp() {
                         }
                     }
                     else -> PanelCard {
-                        Text("Cheems Clash", color = Green, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                        Text("Doreena", color = Green, fontSize = 21.sp, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(12.dp))
                         Text(CheemsBridge.version() + "\n原生支持：HY2 / AnyTLS / VLESS / VMess / SS2022 / TUIC / SOCKS5 等已实现协议。",
                             color = Color.White, fontSize = 13.sp)
                         Spacer(Modifier.height(14.dp))
-                        Text("证书兼容模式", color = Green, fontWeight = FontWeight.Bold)
-                        Text("你选择的模式会跳过 TLS 证书身份验证。通信依然加密，但存在服务器被冒充风险。此版本不依赖 Mihomo。",
-                            color = Color.LightGray, fontSize = 13.sp)
                         Spacer(Modifier.height(14.dp))
                         Text("运行诊断", color = Green, fontWeight = FontWeight.Bold)
                         TextButton(onClick = { diagnostics = CheemsBridge.diagnostics() }) { Text("刷新记录") }
