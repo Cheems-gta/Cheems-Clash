@@ -13,6 +13,10 @@ import win.cheems.core.net.Subscription;
 public final class CheemsBridge {
   private CheemsBridge() {}
 
+  private static boolean supportedInVPN(Node n) {
+    return n.supported() && java.util.Arrays.asList("hysteria2", "anytls", "vless", "vmess", "ss2022", "tuic", "socks5").contains(n.type);
+  }
+
   public static String listNodes(String profile) throws Exception {
     List<Node> nodes = Subscription.parse(profile);
     JSONArray output = new JSONArray();
@@ -22,8 +26,8 @@ public final class CheemsBridge {
       item.put("index", i);
       item.put("name", n.name);
       item.put("protocol", n.type);
-      item.put("supported", n.supported());
-      item.put("reason", n.supported() ? "" : n.unsupported);
+      item.put("supported", supportedInVPN(n));
+      item.put("reason", supportedInVPN(n) ? "" : (n.supported() ? "当前全局 VPN 仅支持原生协议" : n.unsupported));
       output.put(item);
     }
     return output.toString();
@@ -35,7 +39,7 @@ public final class CheemsBridge {
     List<Node> nodes = Subscription.parse(profile);
     if (index < 0 || index >= nodes.size()) throw new IllegalArgumentException("请选择一个节点");
     Node original = nodes.get(index);
-    if (!original.supported()) throw new IllegalArgumentException("该节点尚不受 Cheems Core 支持");
+    if (!supportedInVPN(original)) throw new IllegalArgumentException("该节点尚不支持独立内核全局 VPN");
     CoreService.selected = original.withoutCertificateChecks();
     Intent intent = new Intent(context, CoreService.class);
     // Explicitly requested compatibility mode. Reality uses its own server authentication.
