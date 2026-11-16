@@ -13,6 +13,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = 10
         versionName = "0.3.0-core-preview"
+        ndk { abiFilters.addAll(listOf("arm64-v8a", "x86_64")) }
     }
     buildTypes { release { isMinifyEnabled = false } }
     compileOptions {
