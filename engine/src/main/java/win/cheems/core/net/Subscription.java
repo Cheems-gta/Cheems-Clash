@@ -1,6 +1,7 @@
 package win.cheems.core.net;
 
 import java.net.*;
+import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import org.yaml.snakeyaml.LoaderOptions;
@@ -35,7 +36,7 @@ public final class Subscription {
       opts.setCodePointLimit(MAX_BYTES);
       opts.setNestingDepthLimit(24);
       opts.setAllowDuplicateKeys(false);
-      Object data = new Yaml(new SafeConstructor(opts)).load(text);
+      Object data = new Yaml(new SafeConstructor(opts)).load(yamlReader(text));
       Object list = data instanceof Map ? ((Map<?, ?>) data).get("proxies") : data;
       if (!(list instanceof List)) throw new IllegalArgumentException("没有找到 proxies 节点列表");
       for (Object entry : (List<?>) list) {
@@ -58,6 +59,16 @@ public final class Subscription {
     if (result.isEmpty()) throw new IllegalArgumentException(
         "未识别到有效节点（跳过 " + skipped + " 条异常记录），请检查订阅格式");
     return result;
+  }
+
+  // Reserve a slot for SnakeYAML 2.3's low-surrogate follow-up read.
+  // A full 1024-char read ending in an emoji otherwise overflows its buffer.
+  private static StringReader yamlReader(String text) {
+    return new StringReader(text) {
+      @Override public int read(char[] buffer, int offset, int length) throws java.io.IOException {
+        return super.read(buffer, offset, Math.min(length, 1023));
+      }
+    };
   }
 
   private static Node parseUri(String link) throws Exception {
@@ -89,7 +100,7 @@ public final class Subscription {
       return new Node(m);
     }
     if (scheme.equals("vmess")) {
-      Object decoded = new Yaml(new SafeConstructor(new LoaderOptions())).load(decode(link.substring(separator + 3)));
+      Object decoded = new Yaml(new SafeConstructor(new LoaderOptions())).load(yamlReader(decode(link.substring(separator + 3))));
       if (!(decoded instanceof Map)) throw new IllegalArgumentException("VMess 链接不是有效 JSON 对象");
       Map<?, ?> json = (Map<?, ?>) decoded;
       Map<String, Object> m = new LinkedHashMap<>();
