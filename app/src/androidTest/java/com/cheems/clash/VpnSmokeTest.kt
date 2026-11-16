@@ -18,8 +18,8 @@ class VpnSmokeTest {
     @Test fun testNativeCorePackageAndProfile() {
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         assertNull("CI must grant VPN permission", VpnService.prepare(context))
-        assertNotNull(Class.forName("go.mobilebridge.Mobilebridge"))
-        assertNotNull(Class.forName("go.mobilebridge.Network"))
+        assertNotNull(Class.forName("go.mobilebridge.Mobilebridge",false,context.classLoader))
+        assertNotNull(Class.forName("go.mobilebridge.Network",false,context.classLoader))
         val profile=File(context.filesDir,"profile.yaml")
         profile.writeText("""
             proxies:
