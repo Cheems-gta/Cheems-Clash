@@ -76,7 +76,11 @@ object CoreController {
         }
     }
     private suspend fun stopAndWait(context: Context) {
-        context.stopService(Intent(context, CoreService::class.java))
+        if (CoreService.serviceAlive) {
+            context.startService(Intent(context, CoreService::class.java).setAction(CoreService.ACTION_STOP_VPN))
+        } else {
+            context.stopService(Intent(context, CoreService::class.java))
+        }
         withTimeout(30_000) { while (CoreService.serviceAlive) delay(100) }
     }
     fun connect(context: Context) {
