@@ -21,20 +21,13 @@ class VpnSmokeTest {
         assertTrue("Core state: selected=${CoreController.selected.value} serviceSelected=${CoreService.selected?.name} tunnel=${CoreService.tunnelEstablished} connecting=${CoreService.connecting} serviceAlive=${CoreService.serviceAlive} lastFailure=${CoreService.lastFailure}\n${CoreService.logs()}", check())
     }
     private fun longTcpProbe() {
-        java.net.Socket().use { socket ->
-            socket.connect(java.net.InetSocketAddress("198.18.0.42", 8766), 15000)
-            socket.soTimeout = 20000
-            socket.getOutputStream().write(
-                "GET /large HTTP/1.1\r\nHost: 198.18.0.42\r\nConnection: close\r\n\r\n"
-                    .toByteArray(Charsets.US_ASCII)
-            )
-            val received = socket.getInputStream().readBytes()
-            val prefix = String(received.copyOfRange(0, minOf(received.size, 256)), Charsets.US_ASCII)
-            assertTrue("Large TCP proxy response is not HTTP 200: $prefix", prefix.startsWith("HTTP/1.1 200 OK"))
-            assertTrue("Large TCP transfer ended prematurely: ${received.size} bytes",
-                received.size >= 256 * 1024 + "CHEEMS_CORE_LARGE_OK".length)
-            assertEquals('X'.code.toByte(), received.last())
-        }
+        // The app itself is excluded from VPN. Invoke shell so traffic
+        // actually passes through Android's TUN interface.
+        val descriptor = instrumentation.uiAutomation.executeShellCommand(
+            "sh /data/local/tmp/cheems-probe-large.sh")
+        val response = android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor)
+            .bufferedReader().use { it.readText() }
+        assertTrue("Long TCP over TUN failed: $response", response.contains("CHEEMS_CORE_LARGE_OK"))
     }
     @Test fun testSingleCoreStartSwitchStopRestart() {
         val context = instrumentation.targetContext
