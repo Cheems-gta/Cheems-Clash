@@ -289,7 +289,7 @@ fun CheemsApp() {
                             Text("Making · 独立原生内核（不含 Mihomo）", color = Color.LightGray, fontSize = 12.sp)
                             Spacer(Modifier.height(20.dp))
                             Button(onClick = {
-                                if (running || busy) {
+                                if (running || busy || CheemsBridge.serviceAlive()) {
                                     runCatching { CheemsBridge.disconnect(context) }
                                         .onSuccess {
                                             disconnectRequested = true
@@ -307,7 +307,7 @@ fun CheemsApp() {
                             }, enabled = !importing && !disconnectRequested,
                                 modifier = Modifier.fillMaxWidth().height(56.dp)) {
                                 Text(if (disconnectRequested || CheemsBridge.stopping()) "正在断开 VPN…"
-                                    else if (running || busy) "断开连接" else "连接")
+                                    else if (running || busy || CheemsBridge.serviceAlive()) "断开连接" else "连接")
                             }
                             Spacer(Modifier.height(12.dp))
                             OutlinedButton(
