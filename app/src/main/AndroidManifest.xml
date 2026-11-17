@@ -7,7 +7,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application android:name="win.cheems.core.CheemsApplication"
         android:icon="@mipmap/cheems_app_icon" android:roundIcon="@mipmap/cheems_app_icon"
-        android:label="Cheems Clash" android:allowBackup="false"
+        android:label="Doreena" android:allowBackup="false"
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:usesCleartextTraffic="false">
         <activity android:name=".MainActivity" android:exported="true">
