@@ -136,3 +136,16 @@ jobs:
               --title "Doreena stable-base cosmetic preview" \
               --notes "Native Cheems Core integration, no Mihomo. CI passed for commit ${GITHUB_SHA}. TLS certificate verification bypass enabled by requested compatibility policy; server impersonation risk. Live VPN connectivity requires device testing."
           fi
+
+      - name: Publish Cheems Core disconnect-fix APK
+        if: github.ref == 'refs/heads/fix/disconnect-nonblocking-20261117'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk dist/Cheems-Clash-disconnect-fix.apk
+          tag="cheems-disconnect-fix-${GITHUB_SHA:0:8}"
+          gh release create "$tag" dist/Cheems-Clash-disconnect-fix.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Cheems Clash · disconnect fix preview" \
+            --notes "Independent Cheems Core build. Disconnect tap is acknowledged immediately and Android TUN is released before native teardown. Verified by CI compilation, native unit tests and APK signature checks. Live VPN disconnect on a physical phone has not been independently verified. Uses compatibility-mode TLS certificate verification bypass; use only with servers you trust."

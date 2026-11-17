@@ -51,9 +51,17 @@ public final class CheemsBridge {
 
   public static void disconnect(Context context) {
     if (CoreService.stopping) return;
-    Intent request = new Intent(context, CoreService.class).setAction(CoreService.ACTION_STOP_VPN);
-    if (context.startService(request) == null)
-      throw new IllegalStateException("无法发送 VPN 断开指令");
+    // Acknowledge the tap before Android dispatches the service command.
+    // This flag is also the guard against a new connect while shutdown is in flight.
+    CoreService.stopping = true;
+    try {
+      Intent request = new Intent(context, CoreService.class).setAction(CoreService.ACTION_STOP_VPN);
+      if (context.startService(request) == null)
+        throw new IllegalStateException("无法发送 VPN 断开指令");
+    } catch (RuntimeException failure) {
+      CoreService.stopping = false;
+      throw failure;
+    }
   }
   public static boolean stopping() { return CoreService.stopping; }
   public static boolean canDisconnect() { return CoreService.serviceAlive || CoreService.connecting || CoreService.tunnelEstablished || CoreService.stopping; }

@@ -292,6 +292,7 @@ fun CheemsApp() {
                                     runCatching {
                                         CheemsBridge.disconnect(context)
                                         busy = true
+                                        status = "正在断开 VPN…"
                                         message = "正在断开 VPN…"
                                     }.onFailure {
                                         message = "断开请求失败：" + (it.message ?: it.javaClass.simpleName)
