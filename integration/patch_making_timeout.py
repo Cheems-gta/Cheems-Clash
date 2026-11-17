@@ -77,5 +77,108 @@ replace_once(
     '    super.onDestroy();\n',
 )
 
+
+# The in-app disconnect action must not run gomobile Stop() on Android's UI
+# thread: it closes QUIC/TUN and may take noticeable time on a live connection.
+replace_once(
+    'import android.os.IBinder;\n',
+    'import android.os.IBinder;\nimport android.os.Handler;\nimport android.os.Looper;\n',
+)
+replace_once(
+    '  private static final String ACTION_STOP_VPN = "win.cheems.core.STOP_VPN";\n',
+    '  static final String ACTION_STOP_VPN = "win.cheems.core.STOP_VPN";\n',
+)
+replace_once(
+    '  static volatile boolean connecting;\n',
+    '  static volatile boolean connecting;\n  static volatile boolean stopping;\n',
+)
+replace_once(
+    '  // Tracks a native handshake still in progress during service teardown.\n',
+    '  // Ensure native teardown runs at most once for an in-app disconnect.\n'
+    '  private final AtomicBoolean stopRequested = new AtomicBoolean();\n'
+    '  private volatile boolean nativeStopFinished;\n'
+    '  // Tracks a native handshake still in progress during service teardown.\n',
+)
+replace_once(
+    '          while (!destroyed && core == ownedCore) {\n',
+    '          while (!destroyed && !stopping && core == ownedCore) {\n',
+)
+replace_once(
+    '  @Override\n  public void onCreate() {\n',
+    '''  // Foreground service stays alive while native cleanup runs off the main thread.
+  // stopSelf() is posted only after native Stop has finished.
+  private void requestStop() {
+    if (!stopRequested.compareAndSet(false, true)) return;
+    stopping = true;
+    destroyed = true; // Prevent pending startup from creating a fresh TUN.
+    connecting = false;
+    lastFailure = null;
+    log("用户请求断开 VPN，正在清理原生连接");
+    new Thread(() -> {
+      try {
+        if (ownedCore != null) ownedCore.stop();
+        if (Hysteria2Native.isPackaged()) Hysteria2Native.stop();
+        log("原生连接已关闭");
+      } catch (Exception | LinkageError failure) {
+        log("断开清理异常：" + failure.getClass().getSimpleName());
+      } finally {
+        nativeStopFinished = true;
+        new Handler(Looper.getMainLooper()).post(this::stopSelf);
+      }
+    }, "cheems-vpn-stop").start();
+  }
+
+  @Override
+  public void onCreate() {
+''',
+)
+replace_once(
+    '    if (intent != null && ACTION_STOP_VPN.equals(intent.getAction())) {\n'
+    '      log("用户通过通知栏请求停止 VPN");\n'
+    '      try { stopForeground(STOP_FOREGROUND_REMOVE); } catch (RuntimeException ignored) {}\n'
+    '      stopSelf();\n'
+    '      return START_NOT_STICKY;\n'
+    '    }\n',
+    '    if (intent != null && ACTION_STOP_VPN.equals(intent.getAction())) {\n'
+    '      requestStop();\n'
+    '      return START_NOT_STICKY;\n'
+    '    }\n',
+)
+replace_once(
+    '                if (destroyed) {\n'
+    '                  if (nativeNode) Hysteria2Native.stop();\n'
+    '                  return;\n'
+    '                }\n',
+    '                if (destroyed) {\n'
+    '                  if (nativeNode && !stopRequested.get()) Hysteria2Native.stop();\n'
+    '                  return;\n'
+    '                }\n',
+)
+replace_once(
+    '                if (destroyed) {\n'
+    '                  ownedCore.stop();\n'
+    '                  if (nativeNode) Hysteria2Native.stop();\n'
+    '                }\n',
+    '                if (destroyed && !stopRequested.get()) {\n'
+    '                  ownedCore.stop();\n'
+    '                  if (nativeNode) Hysteria2Native.stop();\n'
+    '                }\n',
+)
+replace_once(
+    '              } catch (Exception | LinkageError e) {\n'
+    '                updateConnecting(false);\n',
+    '              } catch (Exception | LinkageError e) {\n'
+    '                updateConnecting(false);\n'
+    '                if (stopRequested.get()) return;\n',
+)
+replace_once(
+    '      if (nativeCleanupNeeded && Hysteria2Native.isPackaged()) Hysteria2Native.stop();\n',
+    '      if (!nativeStopFinished && nativeCleanupNeeded && Hysteria2Native.isPackaged()) Hysteria2Native.stop();\n',
+)
+replace_once(
+    '    super.onDestroy();\n',
+    '    super.onDestroy();\n    stopping = false;\n',
+)
+
 path.write_text(source, encoding="utf-8")
 print("Making Core timeout/teardown guard applied")
