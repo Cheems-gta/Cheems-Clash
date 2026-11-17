@@ -93,6 +93,18 @@ replace_once(
     '  static volatile boolean connecting;\n  static volatile boolean stopping;\n',
 )
 replace_once(
+    '  static volatile boolean tunnelEstablished;\n',
+    '  static volatile boolean tunnelEstablished;\n  static volatile boolean serviceAlive;\n',
+)
+replace_once(
+    '    super.onCreate();\n    destroyed = false;\n',
+    '    super.onCreate();\n    serviceAlive = true;\n    destroyed = false;\n',
+)
+replace_once(
+    '  public void onDestroy() {\n    destroyed = true;\n',
+    '  public void onDestroy() {\n    serviceAlive = false;\n    destroyed = true;\n',
+)
+replace_once(
     '  // Tracks a native handshake still in progress during service teardown.\n',
     '  // Ensure native teardown runs at most once for an in-app disconnect.\n'
     '  private final AtomicBoolean stopRequested = new AtomicBoolean();\n'
@@ -105,27 +117,37 @@ replace_once(
 )
 replace_once(
     '  @Override\n  public void onCreate() {\n',
-    '''  // Foreground service stays alive while native cleanup runs off the main thread.
-  // stopSelf() is posted only after native Stop has finished.
+    '''  // Android VPN must be released immediately, even if native QUIC/TUN
+  // shutdown takes a long time. Keep the stopping gate until Go returns.
+  private final AtomicBoolean nativeStopLaunched = new AtomicBoolean();
+
+  private void launchNativeCleanup() {
+    if (!nativeStopLaunched.compareAndSet(false, true)) return;
+    stopping = true;
+    new Thread(() -> {
+      try {
+        log("开始异步释放原生 Making 内核");
+        if (Hysteria2Native.isPackaged()) Hysteria2Native.stop();
+        log("原生内核已关闭");
+      } catch (Exception | LinkageError failure) {
+        log("原生清理异常：" + failure.getClass().getSimpleName());
+      } finally {
+        nativeStopFinished = true;
+        stopping = false;
+      }
+    }, "cheems-vpn-stop").start();
+  }
+
   private void requestStop() {
     if (!stopRequested.compareAndSet(false, true)) return;
     stopping = true;
-    destroyed = true; // Prevent pending startup from creating a fresh TUN.
+    destroyed = true; // Prevent an in-progress startup from creating a new TUN.
     connecting = false;
     lastFailure = null;
-    log("用户请求断开 VPN，正在清理原生连接");
-    new Thread(() -> {
-      try {
-        if (ownedCore != null) ownedCore.stop();
-        if (Hysteria2Native.isPackaged()) Hysteria2Native.stop();
-        log("原生连接已关闭");
-      } catch (Exception | LinkageError failure) {
-        log("断开清理异常：" + failure.getClass().getSimpleName());
-      } finally {
-        nativeStopFinished = true;
-        new Handler(Looper.getMainLooper()).post(this::stopSelf);
-      }
-    }, "cheems-vpn-stop").start();
+    log("用户请求断开 VPN，正在释放 Android VPN 服务");
+    // Do not block Android's main thread on Go Stop().
+    // onDestroy closes the Java-owned TUN descriptor before native cleanup.
+    stopSelf();
   }
 
   @Override
@@ -173,11 +195,11 @@ replace_once(
 )
 replace_once(
     '      if (nativeCleanupNeeded && Hysteria2Native.isPackaged()) Hysteria2Native.stop();\n',
-    '      if (!nativeStopFinished && nativeCleanupNeeded && Hysteria2Native.isPackaged()) Hysteria2Native.stop();\n',
+    '      if (nativeCleanupNeeded && !nativeStopFinished) launchNativeCleanup();\n',
 )
 replace_once(
     '    super.onDestroy();\n',
-    '    super.onDestroy();\n    stopping = false;\n',
+    '    super.onDestroy();\n    if (!nativeStopLaunched.get()) stopping = false;\n',
 )
 
 path.write_text(source, encoding="utf-8")
