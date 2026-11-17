@@ -35,7 +35,7 @@ public final class CheemsBridge {
   }
 
   public static void connect(Context context, String profile, int index) throws Exception {
-    if (CoreService.serviceAlive || CoreService.connecting || CoreService.tunnelEstablished || CoreService.stopping)
+    if (CoreService.serviceAlive || CoreService.connecting || CoreService.tunnelEstablished || CoreService.stopping || CoreService.nativeShutdownInProgress || Hysteria2Native.isRunning())
       throw new IllegalStateException("当前已有 VPN 连接或正在连接，请先断开");
     List<Node> nodes = Subscription.parse(profile);
     if (index < 0 || index >= nodes.size()) throw new IllegalArgumentException("请选择一个节点");
@@ -55,12 +55,25 @@ public final class CheemsBridge {
       context.stopService(new Intent(context, CoreService.class));
       return;
     }
-    // Route STOP through onStartCommand. The service stops the native engine
-    // on its own worker thread, then closes Android's VPN interface.
-    context.startService(new Intent(context, CoreService.class)
-        .setAction(CoreService.ACTION_STOP_VPN));
+    CoreService.stopping = true; // Immediate status feedback on the UI thread.
+    try {
+      // The foreground service releases Android VPN before Go cleanup.
+      if (context.startService(new Intent(context, CoreService.class)
+          .setAction(CoreService.ACTION_STOP_VPN)) == null) {
+        context.stopService(new Intent(context, CoreService.class));
+      }
+    } catch (RuntimeException e) {
+      // Android may reject a startService call in some lifecycle states.
+      // stopService must still release Android's VPN via onDestroy().
+      context.stopService(new Intent(context, CoreService.class));
+    }
   }
-  public static boolean stopping() { return CoreService.stopping; }
+  public static boolean stopping() { return CoreService.stopping || CoreService.nativeShutdownInProgress; }
+  public static boolean fullyStopped() {
+    return !CoreService.serviceAlive && !CoreService.stopping
+        && !CoreService.nativeShutdownInProgress && !CoreService.tunnelEstablished
+        && !Hysteria2Native.isRunning();
+  }
   public static boolean serviceAlive() { return CoreService.serviceAlive; }
   public static String verifyConnection() throws Exception {
     if (CoreService.stopping) throw new IllegalStateException("正在断联，无法检测");
@@ -76,9 +89,9 @@ public final class CheemsBridge {
   public static boolean running() {
     return CoreService.tunnelEstablished && Hysteria2Native.isRunning();
   }
-  public static boolean connecting() { return CoreService.connecting || CoreService.stopping; }
+  public static boolean connecting() { return CoreService.connecting || stopping(); }
   public static String status() {
-    if (CoreService.stopping) return "正在断开 VPN…";
+    if (stopping()) return CoreService.serviceAlive ? "正在断开 VPN…" : "Android VPN 已关闭，正在清理 Making 内核…";
     if (CoreService.lastFailure != null && !CoreService.lastFailure.isEmpty())
       return "连接失败：" + CoreService.lastFailure;
     if (CoreService.connecting) return "正在连接…";
@@ -94,5 +107,5 @@ public final class CheemsBridge {
     return c == null ? 0 : c.downloaded();
   }
   public static String diagnostics() { return CoreService.logs(); }
-  public static String version() { return "Cheems Core · 0.3.0 集成版"; }
+  public static String version() { return "Making · 0.3.2 连接修复版"; }
 }
