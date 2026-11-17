@@ -354,7 +354,7 @@ fun CheemsApp() {
 
     MaterialTheme(colorScheme = darkColorScheme(primary = Green, background = Background, surface = Panel)) {
         Column(Modifier.fillMaxSize().background(Background).systemBarsPadding().padding(20.dp)) {
-            Text("CHEEMS  /  CLASH", color = Green, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text("DOREENA  /  MAKING", color = Green, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
             Text(listOf("控制台", "节点", "配置", "设置")[tab], color = Color.White,
                 fontSize = 30.sp, fontWeight = FontWeight.Bold)
