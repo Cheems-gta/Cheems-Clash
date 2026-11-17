@@ -1,7 +1,7 @@
 name: Build Cheems Clash with independent Cheems Core
 on:
   push:
-    branches: [core-integration, main, doreena-stable-icon-only, 'fix/making-timeout-crash', 'fix/making-disconnect-button']
+    branches: [core-integration, main, doreena-stable-icon-only, 'fix/making-timeout-crash', 'fix/making-disconnect-button', 'fix/making-disconnect-lifecycle-v2']
   workflow_dispatch:
 
 permissions:
@@ -61,6 +61,9 @@ jobs:
           python3 integration/patch_making_timeout.py
           grep -q 'private void requestStop()' app/src/main/java/win/cheems/core/CoreService.java
           grep -q 'new Thread(() -> {' app/src/main/java/win/cheems/core/CoreService.java
+          grep -q 'private void launchNativeCleanup()' app/src/main/java/win/cheems/core/CoreService.java
+          grep -q 'serviceAlive = false' app/src/main/java/win/cheems/core/CoreService.java
+          grep -q 'stopSelf();' app/src/main/java/win/cheems/core/CoreService.java
           sed -i 's/new Intent(this, MainActivity.class)/new Intent(this, com.cheems.clash.MainActivity.class)/g' app/src/main/java/win/cheems/core/CoreService.java
           # Cosmetic-only notification branding; leave native VPN implementation untouched.
           sed -i 's/android.R.drawable.stat_sys_upload_done/getResources().getIdentifier("ic_notification", "drawable", getPackageName())/g' app/src/main/java/win/cheems/core/CoreService.java
