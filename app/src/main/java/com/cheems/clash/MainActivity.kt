@@ -272,17 +272,27 @@ fun CheemsApp() {
                             Text("Making · 独立原生内核（不含 Mihomo）", color = Color.LightGray, fontSize = 12.sp)
                             Spacer(Modifier.height(20.dp))
                             Button(onClick = {
-                                if (running || busy) {
-                                    CheemsBridge.disconnect(context)
-                                    message = "正在断开 VPN"
+                                if (CheemsBridge.stopping()) {
+                                    message = "正在断开 VPN…"
+                                } else if (running || busy) {
+                                    runCatching {
+                                        CheemsBridge.disconnect(context)
+                                        busy = true
+                                        message = "正在断开 VPN…"
+                                    }.onFailure {
+                                        message = "断开请求失败：" + (it.message ?: it.javaClass.simpleName)
+                                    }
                                 } else if (nodes.isEmpty()) {
                                     tab = 2; message = "请先导入配置"
                                 } else {
                                     val intent = VpnService.prepare(context)
                                     if (intent == null) connect() else permission.launch(intent)
                                 }
-                            }, enabled = !importing, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-                                Text(if (busy) "断开正在连接的 VPN" else if (running) "断开连接" else "连接")
+                            }, enabled = !importing && !CheemsBridge.stopping(),
+                                modifier = Modifier.fillMaxWidth().height(56.dp)) {
+                                Text(if (CheemsBridge.stopping()) "正在断开…"
+                                    else if (busy) "断开正在连接的 VPN"
+                                    else if (running) "断开连接" else "连接")
                             }
                         }
                         Spacer(Modifier.height(14.dp))
