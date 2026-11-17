@@ -274,7 +274,7 @@ fun CheemsApp() {
                             Button(onClick = {
                                 if (CheemsBridge.stopping()) {
                                     message = "正在断开 VPN…"
-                                } else if (running || busy) {
+                                } else if (CheemsBridge.canDisconnect() || running || busy) {
                                     runCatching {
                                         CheemsBridge.disconnect(context)
                                         busy = true
@@ -292,7 +292,7 @@ fun CheemsApp() {
                                 modifier = Modifier.fillMaxWidth().height(56.dp)) {
                                 Text(if (CheemsBridge.stopping()) "正在断开…"
                                     else if (busy) "断开正在连接的 VPN"
-                                    else if (running) "断开连接" else "连接")
+                                    else if (CheemsBridge.canDisconnect() || running) "断开连接" else "连接")
                             }
                         }
                         Spacer(Modifier.height(14.dp))
