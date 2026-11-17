@@ -10,8 +10,8 @@ android {
         applicationId = "com.cheems.clash"
         minSdk = 28
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.3.3-making-disconnect-latency"
+        versionCode = 14
+        versionName = "0.3.4-making-anytls-icons"
     }
     buildTypes { getByName("release") { isMinifyEnabled = false } }
     compileOptions {
