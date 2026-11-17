@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -150,6 +151,11 @@ fun CheemsApp() {
     var diagnostics by remember { mutableStateOf("") }
     var upSpeed by remember { mutableLongStateOf(0L) }
     var downSpeed by remember { mutableLongStateOf(0L) }
+    var disconnectRequested by remember { mutableStateOf(false) }
+    var disconnectWarned by remember { mutableStateOf(false) }
+    var disconnectStartedAt by remember { mutableLongStateOf(0L) }
+    var checkingConnection by remember { mutableStateOf(false) }
+    var connectionCheck by remember { mutableStateOf("") }
     val startupPrefs = remember { context.getSharedPreferences("vpn_startup", 0) }
     fun recentCrash(): String = if (startupPrefs.getBoolean("crash_pending", false)) {
         "最近一次进程异常：" + startupPrefs.getString("crash_type", "未知") +
@@ -211,6 +217,17 @@ fun CheemsApp() {
                 running = nextRunning
                 busy = nextBusy
                 if (!nextBusy && message == "正在启动 Making 内核") message = ""
+                if (disconnectRequested) {
+                    if (!CheemsBridge.serviceAlive() && !nextRunning && !nextBusy) {
+                        disconnectRequested = false
+                        message = "VPN 已完全断开"
+                        connectionCheck = ""
+                    } else if (!disconnectWarned &&
+                        SystemClock.elapsedRealtime() - disconnectStartedAt > 15000L) {
+                        disconnectWarned = true
+                        message = "断联超过 15 秒，仍未确认完成；可在 Android 系统 VPN 设置中停止"
+                    }
+                }
                 upSpeed = (currentUp - previousUp).coerceAtLeast(0L)
                 downSpeed = (currentDown - previousDown).coerceAtLeast(0L)
                 previousUp = currentUp
@@ -273,16 +290,51 @@ fun CheemsApp() {
                             Spacer(Modifier.height(20.dp))
                             Button(onClick = {
                                 if (running || busy) {
-                                    CheemsBridge.disconnect(context)
-                                    message = "正在断开 VPN"
+                                    runCatching { CheemsBridge.disconnect(context) }
+                                        .onSuccess {
+                                            disconnectRequested = true
+                                            disconnectWarned = false
+                                            disconnectStartedAt = SystemClock.elapsedRealtime()
+                                            message = "已发送断联指令，正在停止 Making 内核及 Android VPN"
+                                        }
+                                        .onFailure { message = "断联请求失败：" + (it.message ?: it.javaClass.simpleName) }
                                 } else if (nodes.isEmpty()) {
                                     tab = 2; message = "请先导入配置"
                                 } else {
                                     val intent = VpnService.prepare(context)
                                     if (intent == null) connect() else permission.launch(intent)
                                 }
-                            }, enabled = !importing, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-                                Text(if (busy) "断开正在连接的 VPN" else if (running) "断开连接" else "连接")
+                            }, enabled = !importing && !disconnectRequested,
+                                modifier = Modifier.fillMaxWidth().height(56.dp)) {
+                                Text(if (disconnectRequested || CheemsBridge.stopping()) "正在断开 VPN…"
+                                    else if (running || busy) "断开连接" else "连接")
+                            }
+                            Spacer(Modifier.height(12.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    scope.launch {
+                                        checkingConnection = true
+                                        connectionCheck = "正在验证 Making 节点及双向转发…"
+                                        try {
+                                            connectionCheck = withContext(Dispatchers.IO) {
+                                                CheemsBridge.verifyConnection()
+                                            }
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            connectionCheck = "连接检测未通过：" + (e.message ?: e.javaClass.simpleName)
+                                        } finally {
+                                            checkingConnection = false
+                                        }
+                                    }
+                                },
+                                enabled = running && !busy && !importing && !checkingConnection && !disconnectRequested,
+                                modifier = Modifier.fillMaxWidth()) {
+                                Text(if (checkingConnection) "检测中…" else "检查连接")
+                            }
+                            if (connectionCheck.isNotEmpty()) {
+                                Spacer(Modifier.height(8.dp))
+                                Text(connectionCheck, color = Color.LightGray, fontSize = 12.sp)
                             }
                         }
                         Spacer(Modifier.height(14.dp))
