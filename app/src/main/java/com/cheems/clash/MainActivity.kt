@@ -205,19 +205,31 @@ fun CheemsApp() {
         while (true) {
             try {
                 // A failed native start must not crash the Compose polling coroutine.
-                val nextStatus = CheemsBridge.status()
-                val nextRunning = CheemsBridge.running()
-                val nextBusy = CheemsBridge.connecting()
-                val nextStopping = CheemsBridge.stopping()
-                val nextServiceActive = CheemsBridge.hasService()
-                val currentUp = CheemsBridge.up()
-                val currentDown = CheemsBridge.down()
+                // Bridge calls may block in native code during shutdown. Never invoke them on the UI thread.
+                val snapshot = withContext(Dispatchers.IO) {
+                    listOf(
+                        CheemsBridge.status(),
+                        CheemsBridge.running().toString(),
+                        CheemsBridge.connecting().toString(),
+                        CheemsBridge.stopping().toString(),
+                        CheemsBridge.hasService().toString(),
+                        CheemsBridge.up().toString(),
+                        CheemsBridge.down().toString()
+                    )
+                }
+                val nextStatus = snapshot[0]
+                val nextRunning = snapshot[1].toBoolean()
+                val nextBusy = snapshot[2].toBoolean()
+                val nextStopping = snapshot[3].toBoolean()
+                val nextServiceActive = snapshot[4].toBoolean()
+                val currentUp = snapshot[5].toLong()
+                val currentDown = snapshot[6].toLong()
                 status = nextStatus
                 running = nextRunning
                 busy = nextBusy
                 stopping = nextStopping
                 serviceActive = nextServiceActive
-                if (stopRequested && !nextStopping && !nextRunning && !nextBusy) stopRequested = false
+                if (stopRequested && !nextStopping && !nextRunning && !nextBusy && !nextServiceActive) stopRequested = false
                 if (!nextBusy && message == "正在启动 Making 内核") message = ""
                 upSpeed = (currentUp - previousUp).coerceAtLeast(0L)
                 downSpeed = (currentDown - previousDown).coerceAtLeast(0L)
