@@ -93,6 +93,18 @@ replace_once(
     '  static volatile boolean connecting;\n  static volatile boolean stopping;\n',
 )
 replace_once(
+    '  static volatile boolean tunnelEstablished;\n',
+    '  static volatile boolean tunnelEstablished;\n  static volatile boolean serviceAlive;\n',
+)
+replace_once(
+    '    super.onCreate();\n    destroyed = false;\n',
+    '    super.onCreate();\n    serviceAlive = true;\n    destroyed = false;\n',
+)
+replace_once(
+    '  public void onDestroy() {\n    destroyed = true;\n',
+    '  public void onDestroy() {\n    serviceAlive = false;\n    destroyed = true;\n',
+)
+replace_once(
     '  // Tracks a native handshake still in progress during service teardown.\n',
     '  // Ensure native teardown runs at most once for an in-app disconnect.\n'
     '  private final AtomicBoolean stopRequested = new AtomicBoolean();\n'
