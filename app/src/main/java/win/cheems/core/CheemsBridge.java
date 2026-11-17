@@ -70,6 +70,8 @@ public final class CheemsBridge {
   }
   public static boolean stopping() { return CoreService.shuttingDown; }
   public static boolean running() {
+    // Do not enter native Go getters while the cleanup worker is stopping Go.
+    if (CoreService.shuttingDown) return false;
     return CoreService.tunnelEstablished && Hysteria2Native.isRunning();
   }
   public static boolean connecting() { return CoreService.connecting; }
