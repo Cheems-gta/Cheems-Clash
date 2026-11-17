@@ -3,6 +3,7 @@ package com.cheems.clash
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.Context
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
@@ -24,6 +25,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -130,6 +133,50 @@ private fun speed(bytes: Long): String = when {
     else -> bytes.toString() + " B/s"
 }
 
+private suspend fun probeLatency(context: Context, profile: String, index: Int): String = withContext(Dispatchers.IO) {
+    try {
+        CheemsBridge.measureNodeLatency(context.applicationContext, profile, index).toString() + " ms · 协议连接"
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        val reason = e.cause?.message ?: e.message ?: ""
+        if (reason.contains("timeout", ignoreCase = true) ||
+            reason.contains("deadline", ignoreCase = true)) "超时"
+        else "握手失败"
+    }
+}
+
+// Limit concurrent authenticated Hysteria2 measurements on mobile networks.
+private suspend fun probeNodeBatch(
+    context: Context,
+    profile: String,
+    nodes: List<NodeRow>,
+    latencies: MutableMap<Int, String>
+) {
+    val limit = Semaphore(3)
+    coroutineScope {
+        nodes.map { node ->
+            launch {
+                limit.withPermit {
+                    latencies[node.index] = "测速中…"
+                    latencies[node.index] = probeLatency(context, profile, node.index)
+                }
+            }
+        }.joinAll()
+    }
+}
+
+// JNI status and traffic queries can block while native QUIC/TUN teardown runs.
+// Keep all native status polling off the Compose UI thread.
+private data class BridgeSnapshot(
+    val status: String,
+    val running: Boolean,
+    val busy: Boolean,
+    val up: Long,
+    val down: Long,
+    val fullyStopped: Boolean
+)
+
 @Composable
 fun CheemsApp() {
     val context = LocalContext.current
@@ -151,6 +198,9 @@ fun CheemsApp() {
     var diagnostics by remember { mutableStateOf("") }
     var upSpeed by remember { mutableLongStateOf(0L) }
     var downSpeed by remember { mutableLongStateOf(0L) }
+    val nodeLatencies = remember(profile) { mutableStateMapOf<Int, String>() }
+    var testingAllNodes by remember { mutableStateOf(false) }
+    var autoLatencyCompleted by remember(profile) { mutableStateOf(false) }
     var disconnectRequested by remember { mutableStateOf(false) }
     var disconnectWarned by remember { mutableStateOf(false) }
     var disconnectStartedAt by remember { mutableLongStateOf(0L) }
@@ -207,31 +257,32 @@ fun CheemsApp() {
         var previousDown = 0L
         while (true) {
             try {
-                // A failed native start must not crash the Compose polling coroutine.
-                val nextStatus = CheemsBridge.status()
-                val nextRunning = CheemsBridge.running()
-                val nextBusy = CheemsBridge.connecting()
-                val currentUp = CheemsBridge.up()
-                val currentDown = CheemsBridge.down()
-                status = nextStatus
-                running = nextRunning
-                busy = nextBusy
-                if (!nextBusy && message == "正在启动 Making 内核") message = ""
-                if (disconnectRequested) {
-                    if (!CheemsBridge.serviceAlive() && !nextRunning && !nextBusy) {
-                        disconnectRequested = false
-                        message = "VPN 已完全断开"
-                        connectionCheck = ""
-                    } else if (!disconnectWarned &&
-                        SystemClock.elapsedRealtime() - disconnectStartedAt > 15000L) {
-                        disconnectWarned = true
-                        message = "断联超过 15 秒，仍未确认完成；可在 Android 系统 VPN 设置中停止"
-                    }
+                // Core native calls may block; never run them on the Compose main thread.
+                val shouldCheckStopped = disconnectRequested
+                val snapshot = withContext(Dispatchers.IO) {
+                    BridgeSnapshot(
+                        CheemsBridge.status(),
+                        CheemsBridge.running(),
+                        CheemsBridge.connecting(),
+                        CheemsBridge.up(),
+                        CheemsBridge.down(),
+                        shouldCheckStopped && CheemsBridge.fullyStopped()
+                    )
                 }
-                upSpeed = (currentUp - previousUp).coerceAtLeast(0L)
-                downSpeed = (currentDown - previousDown).coerceAtLeast(0L)
-                previousUp = currentUp
-                previousDown = currentDown
+                status = snapshot.status
+                running = snapshot.running
+                busy = snapshot.busy
+                if (!snapshot.busy && message == "正在启动 Making 内核") message = ""
+                if (disconnectRequested && shouldCheckStopped &&
+                    snapshot.fullyStopped && !snapshot.running && !snapshot.busy) {
+                    disconnectRequested = false
+                    message = "VPN 已完全断开"
+                    connectionCheck = ""
+                }
+                upSpeed = (snapshot.up - previousUp).coerceAtLeast(0L)
+                downSpeed = (snapshot.down - previousDown).coerceAtLeast(0L)
+                previousUp = snapshot.up
+                previousDown = snapshot.down
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -246,6 +297,16 @@ fun CheemsApp() {
                 diagnostics = "内核接口异常：" + e.javaClass.simpleName
             }
             delay(1000L)
+        }
+    }
+    // The warning must still appear even if a native status call never returns.
+    LaunchedEffect(disconnectRequested, disconnectStartedAt) {
+        if (disconnectRequested) {
+            delay(15000L)
+            if (disconnectRequested && !disconnectWarned) {
+                disconnectWarned = true
+                message = "断联超过 15 秒，原生清理尚未确认完成；若 VPN 图标仍在，请从 Android 系统 VPN 设置断开"
+            }
         }
     }
     LaunchedEffect(autoRefresh, refreshMinutes, url, running, busy, importing) {
@@ -270,6 +331,27 @@ fun CheemsApp() {
         }
     }
 
+    // Automatically populate ms values on the node screen once per profile.
+    // Keep at most three handshakes active and cancel safely on navigation.
+    LaunchedEffect(tab, profile, busy, disconnectRequested) {
+        if (tab != 1 || busy || disconnectRequested || testingAllNodes || autoLatencyCompleted) return@LaunchedEffect
+        val targets = nodes.filter { it.supported && (it.protocol == "hysteria2" || it.protocol == "anytls") }
+        if (targets.isEmpty()) return@LaunchedEffect
+        autoLatencyCompleted = true
+        testingAllNodes = true
+        try {
+            probeNodeBatch(context, profile, targets, nodeLatencies)
+        } catch (e: CancellationException) {
+            autoLatencyCompleted = false
+            throw e
+        } finally {
+            targets.forEach { node ->
+                if (nodeLatencies[node.index] == "测速中…") nodeLatencies[node.index] = "未完成"
+            }
+            testingAllNodes = false
+        }
+    }
+
     MaterialTheme(colorScheme = darkColorScheme(primary = Green, background = Background, surface = Panel)) {
         Column(Modifier.fillMaxSize().background(Background).systemBarsPadding().padding(20.dp)) {
             Text("CHEEMS  /  CLASH", color = Green, fontSize = 14.sp, fontWeight = FontWeight.Bold)
@@ -286,25 +368,36 @@ fun CheemsApp() {
                             Spacer(Modifier.height(14.dp))
                             Text(status, color = Green, fontSize = 23.sp, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(8.dp))
-                            Text("Making · 独立原生内核（不含 Mihomo）", color = Color.LightGray, fontSize = 12.sp)
+                            Text("Making · 独立原生内核", color = Color.LightGray, fontSize = 12.sp)
                             Spacer(Modifier.height(20.dp))
                             Button(onClick = {
                                 if (running || busy || CheemsBridge.serviceAlive()) {
-                                    runCatching { CheemsBridge.disconnect(context) }
-                                        .onSuccess {
-                                            disconnectRequested = true
-                                            disconnectWarned = false
-                                            disconnectStartedAt = SystemClock.elapsedRealtime()
+                                    // Always acknowledge the tap before any binder/service operation.
+                                    disconnectRequested = true
+                                    disconnectWarned = false
+                                    disconnectStartedAt = SystemClock.elapsedRealtime()
+                                    status = "正在断开 VPN…"
+                                    message = "正在发送断联指令…"
+                                    scope.launch {
+                                        try {
+                                            withContext(Dispatchers.IO) {
+                                                CheemsBridge.disconnect(context)
+                                            }
                                             message = "已发送断联指令，正在停止 Making 内核及 Android VPN"
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            disconnectRequested = false
+                                            message = "断联请求失败：" + (e.message ?: e.javaClass.simpleName)
                                         }
-                                        .onFailure { message = "断联请求失败：" + (it.message ?: it.javaClass.simpleName) }
+                                    }
                                 } else if (nodes.isEmpty()) {
                                     tab = 2; message = "请先导入配置"
                                 } else {
                                     val intent = VpnService.prepare(context)
                                     if (intent == null) connect() else permission.launch(intent)
                                 }
-                            }, enabled = !importing && !disconnectRequested,
+                            }, enabled = !disconnectRequested && (!importing || running || busy || CheemsBridge.serviceAlive()),
                                 modifier = Modifier.fillMaxWidth().height(56.dp)) {
                                 Text(if (disconnectRequested || CheemsBridge.stopping()) "正在断开 VPN…"
                                     else if (running || busy || CheemsBridge.serviceAlive()) "断开连接" else "连接")
@@ -336,6 +429,26 @@ fun CheemsApp() {
                                 Spacer(Modifier.height(8.dp))
                                 Text(connectionCheck, color = Color.LightGray, fontSize = 12.sp)
                             }
+                            // A native teardown can remain blocked after the Android TUN
+                            // stop request. Never leave the user with no recovery action.
+                            if (disconnectRequested && disconnectWarned) {
+                                Spacer(Modifier.height(10.dp))
+                                OutlinedButton(
+                                    onClick = {
+                                        runCatching {
+                                            context.startActivity(
+                                                Intent(android.provider.Settings.ACTION_VPN_SETTINGS)
+                                            )
+                                        }.onFailure {
+                                            message = "无法打开系统 VPN 设置：" +
+                                                (it.message ?: it.javaClass.simpleName)
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("打开系统 VPN 设置以断开")
+                                }
+                            }
                         }
                         Spacer(Modifier.height(14.dp))
                         PanelCard {
@@ -350,10 +463,37 @@ fun CheemsApp() {
                         PanelCard {
                             Text("当前节点", color = Green, fontWeight = FontWeight.Bold)
                             Text(nodes.firstOrNull { it.index == selected }?.name ?: "未选择", color = Color.White)
+                            Text("节点延迟：" + (nodeLatencies[selected] ?: "未测速"),
+                                color = Color.LightGray, fontSize = 12.sp)
                         }
                     }
                     1 -> {
                         Text("已导入 " + nodes.size + " 个节点 · 连接前选择", color = Color.LightGray, fontSize = 13.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Text("进入此页自动测量 HY2 / AnyTLS 节点延迟（ms），最多同时 3 个。",
+                            color = Color.LightGray, fontSize = 12.sp)
+                        Spacer(Modifier.height(12.dp))
+                        Button(onClick = {
+                            testingAllNodes = true
+                            val snapshot = profile
+                            val targets = nodes.filter { it.supported && (it.protocol == "hysteria2" || it.protocol == "anytls") }
+                            scope.launch {
+                                try {
+                                    probeNodeBatch(context, snapshot, targets, nodeLatencies)
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } finally {
+                                    targets.forEach { node ->
+                                        if (nodeLatencies[node.index] == "测速中…") nodeLatencies[node.index] = "未完成"
+                                    }
+                                    testingAllNodes = false
+                                }
+                            }
+                        }, enabled = !busy && !disconnectRequested && !testingAllNodes &&
+                            nodes.any { it.supported && (it.protocol == "hysteria2" || it.protocol == "anytls") },
+                            modifier = Modifier.fillMaxWidth()) {
+                            Text(if (testingAllNodes) "正在测试节点延迟…" else "一键重新测试节点延迟")
+                        }
                         Spacer(Modifier.height(12.dp))
                         nodes.forEach { node ->
                             PanelCard {
@@ -364,12 +504,32 @@ fun CheemsApp() {
                                     color = Color.LightGray, fontSize = 12.sp)
                                 if (!node.supported) Text(node.reason, color = Color(0xFFFFB4AB), fontSize = 12.sp)
                                 Spacer(Modifier.height(6.dp))
-                                OutlinedButton(onClick = {
-                                    selected = node.index
-                                    prefs.edit().putInt("core_selected_index", selected).apply()
-                                    message = "已选择：" + node.name
-                                }, enabled = node.supported && !running && !busy) {
-                                    Text(if (selected == node.index) "当前选择" else "选择节点")
+                                Text(
+                                    if ((node.protocol == "hysteria2" || node.protocol == "anytls") && node.supported)
+                                        "延迟：" + (nodeLatencies[node.index] ?: "未测速")
+                                    else "延迟：尚未支持该协议",
+                                    color = Green, fontSize = 13.sp
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    OutlinedButton(onClick = {
+                                        selected = node.index
+                                        prefs.edit().putInt("core_selected_index", selected).apply()
+                                        message = "已选择：" + node.name
+                                    }, enabled = node.supported && !running && !busy) {
+                                        Text(if (selected == node.index) "当前选择" else "选择节点")
+                                    }
+                                    OutlinedButton(onClick = {
+                                        nodeLatencies[node.index] = "测速中…"
+                                        val snapshot = profile
+                                        scope.launch {
+                                            nodeLatencies[node.index] = probeLatency(context, snapshot, node.index)
+                                        }
+                                    }, enabled = !busy && !disconnectRequested && !testingAllNodes &&
+                                        node.supported && (node.protocol == "hysteria2" || node.protocol == "anytls") &&
+                                        nodeLatencies[node.index] != "测速中…") {
+                                        Text("测速")
+                                    }
                                 }
                             }
                             Spacer(Modifier.height(10.dp))
@@ -452,7 +612,7 @@ fun CheemsApp() {
                         Text(if (diagnostics.isEmpty()) "暂无记录" else diagnostics,
                             color = Color.LightGray, fontSize = 12.sp)
                         Spacer(Modifier.height(10.dp))
-                        Text("此集成版不含 Mihomo 的策略组热切换或规则引擎；新内核仅提供实际实现的协议功能。",
+                        Text("Making 当前仅提供已经实现的协议功能。",
                             color = Color.LightGray, fontSize = 12.sp)
                     }
                 }

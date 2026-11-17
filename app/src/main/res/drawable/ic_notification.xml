@@ -1,6 +1,10 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
- android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
- <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
- android:pathData="M5.5,14 C5,11 6,9 7,8 L7.5,3.8 Q8,2.5 9,3.6 L11,5.7 Q12,5.4 13,5.7 L15,3.6 Q16,2.5 16.5,3.8 L17,8 Q20,12 18,17 Q16,21 11,21 Q6,21 5.5,14 Z M8,11 L11,13 Q9,16 8,13 Z M16,11 L13,13 Q15,16 16,13 Z"/>
- <path android:fillColor="#FFFFFFFF" android:pathData="M5,13 Q0,19 7,19 Q15,19 22,13 Q24,10 18,10 Q22,11 19,14 Q13,19 6,17 Q3,16 5,13 Z"/>
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- Android system notification icons are alpha-only: the OS tints this
+         white cat-and-orbit silhouette, matching the app icon motif. -->
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
+        android:pathData="M5.5,14 C5,11 6,9 7,8 L7.5,3.8 Q8,2.5 9,3.6 L11,5.7 Q12,5.4 13,5.7 L15,3.6 Q16,2.5 16.5,3.8 L17,8 Q20,12 18,17 Q16,21 11,21 Q6,21 5.5,14 Z M8,11 L11,13 Q9,16 8,13 Z M16,11 L13,13 Q15,16 16,13 Z"/>
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M5,13 Q0,19 7,19 Q15,19 22,13 Q24,10 18,10 Q22,11 19,14 Q13,19 6,17 Q3,16 5,13 Z"/>
 </vector>

@@ -1,7 +1,7 @@
 name: Build Cheems Clash with independent Cheems Core
 on:
   push:
-    branches: [core-integration, main, doreena-stable-icon-only, 'fix/making-timeout-crash', 'fix/making-connect-disconnect']
+    branches: [core-integration, main, doreena-stable-icon-only, 'fix/making-timeout-crash', 'fix/making-connect-disconnect', 'fix/making-disconnect-release-tun']
   workflow_dispatch:
 
 permissions:
@@ -61,7 +61,8 @@ jobs:
           python3 integration/patch_making_timeout.py
           sed -i 's/new Intent(this, MainActivity.class)/new Intent(this, com.cheems.clash.MainActivity.class)/g' app/src/main/java/win/cheems/core/CoreService.java
           # Cosmetic-only notification branding; leave native VPN implementation untouched.
-          sed -i 's/android.R.drawable.stat_sys_upload_done/getResources().getIdentifier("ic_notification", "drawable", getPackageName())/g' app/src/main/java/win/cheems/core/CoreService.java
+          sed -i 's/android.R.drawable.stat_sys_upload_done/com.cheems.clash.R.drawable.ic_notification/g' app/src/main/java/win/cheems/core/CoreService.java
+          grep -q 'com.cheems.clash.R.drawable.ic_notification' app/src/main/java/win/cheems/core/CoreService.java
           sed -i 's/Cheems Core · VPN/Doreena · Making/g; s/Cheems Core VPN/Doreena VPN/g' app/src/main/java/win/cheems/core/CoreService.java
           mkdir -p app/src/main/assets/licenses
           cp core-upstream/COPYING app/src/main/assets/licenses/Cheems-Core-GPL-3.0.txt
@@ -97,6 +98,10 @@ jobs:
           javap -classpath /tmp/cheems-mobilebridge.jar go.mobilebridge.Mobilebridge > /tmp/api.txt
           grep -q "startTunnel" /tmp/api.txt
           grep -q "startWithNetwork" /tmp/api.txt
+          # The UI calls this via reflection; fail the build rather than shipping
+          # an APK whose latency button always fails at runtime.
+          grep -q "probeHysteria2WithNetwork" /tmp/api.txt
+          grep -q "probeAnyTLSWithNetwork" /tmp/api.txt
           gradle :app:assembleDebug --stacktrace --no-daemon
           test -s app/build/outputs/apk/debug/app-debug.apk
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose app/build/outputs/apk/debug/app-debug.apk
@@ -129,3 +134,17 @@ jobs:
               --title "Doreena stable-base cosmetic preview" \
               --notes "Native Cheems Core integration, no Mihomo. CI passed for commit ${GITHUB_SHA}. TLS certificate verification bypass enabled by requested compatibility policy; server impersonation risk. Live VPN connectivity requires device testing."
           fi
+
+      - name: Publish Making disconnect preview APK
+        if: github.ref == 'refs/heads/fix/making-disconnect-release-tun'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk dist/Cheems-Clash-Making-Disconnect-Fix.apk
+          sha256sum dist/Cheems-Clash-Making-Disconnect-Fix.apk > dist/SHA256SUMS.txt
+          tag="making-disconnect-fix-${GITHUB_SHA:0:8}"
+          gh release create "$tag" dist/Cheems-Clash-Making-Disconnect-Fix.apk dist/SHA256SUMS.txt \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Cheems Clash Making disconnect fix preview (${GITHUB_SHA:0:8})" \
+            --notes "Cheems Core / Making disconnect UI responsiveness and TUN release fixes. CI compile, native tests and APK signing checks completed. Physical Android disconnect and reconnect behavior has not been independently verified. The compatibility mode can bypass TLS certificate verification; only connect to trusted servers."
