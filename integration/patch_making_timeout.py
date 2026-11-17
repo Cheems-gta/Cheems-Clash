@@ -330,3 +330,31 @@ replace_once(
 )
 path.write_text(source, encoding="utf-8")
 print("Making disconnect v2: Android VPN released before asynchronous Go teardown")
+
+
+# The Go TUN shutdown must first close the device to release blocked readers,
+# then await stack cleanup. This preserves startup behavior and native routing.
+native_path = Path("core-upstream/native/quic/mobilebridge/vpn_tunnel.go")
+native_source = native_path.read_text(encoding="utf-8")
+native_before = (
+    '\tif stack != nil {\n'
+    '\t\t_ = stack.Close()\n'
+    '\t}\n'
+    '\tif device != nil {\n'
+    '\t\t_ = device.Close()\n'
+    '\t}\n'
+)
+native_after = (
+    '\t// Close the TUN device first so packet readers wake before stack shutdown.\n'
+    '\tif device != nil {\n'
+    '\t\t_ = device.Close()\n'
+    '\t}\n'
+    '\tif stack != nil {\n'
+    '\t\t_ = stack.Close()\n'
+    '\t}\n'
+)
+if native_source.count(native_before) != 1:
+    raise SystemExit("Pinned Go TUN StopTunnel shutdown order has changed")
+native_path.write_text(native_source.replace(native_before, native_after, 1),
+                       encoding="utf-8")
+print("Making TUN teardown: close device before waiting for stack")
