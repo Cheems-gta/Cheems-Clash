@@ -199,3 +199,134 @@ replace_once(
     '          while (!destroyed && !stopping && core == ownedCore) {\n',
 )
 path.write_text(source, encoding="utf-8")
+
+
+# Disconnect v2: Stop must not wait for the native Go tunnel teardown before
+# Android receives its stopSelf / VPN descriptor close. The old ordering waited
+# for a possibly blocked StopTunnel() before stopSelf(), so the button appeared
+# inert and Android could keep displaying an active VPN.
+replace_once(
+    '  static volatile boolean stopping;\n',
+    '  static volatile boolean stopping;\n'
+    '  static volatile boolean nativeShutdownInProgress;\n',
+)
+old_stop = (
+    '    if (intent != null && ACTION_STOP_VPN.equals(intent.getAction())) {\n'
+    '      if (stopRequested.compareAndSet(false, true)) {\n'
+    '        stopping = true;\n'
+    '        connecting = false;\n'
+    '        lastFailure = null;\n'
+    '        log("收到断联请求，后台关闭 Making 内核和 Android VPN");\n'
+    '        Thread shutdown = new Thread(() -> {\n'
+    '          try {\n'
+    '            if (Hysteria2Native.isPackaged()) Hysteria2Native.stop();\n'
+    '            log("Making 原生停止指令已执行");\n'
+    '          } catch (Exception | LinkageError e) {\n'
+    '            log("Making 断联异常：" + e.getClass().getSimpleName());\n'
+    '          } finally {\n'
+    '            nativeStopped = true;\n'
+    '            stopSelf();\n'
+    '          }\n'
+    '        }, "making-disconnect");\n'
+    '        shutdown.setDaemon(true);\n'
+    '        shutdown.start();\n'
+    '      }\n'
+    '      return START_NOT_STICKY;\n'
+    '    }\n'
+)
+new_stop = (
+    '    if (intent != null && ACTION_STOP_VPN.equals(intent.getAction())) {\n'
+    '      if (stopRequested.compareAndSet(false, true)) {\n'
+    '        stopping = true;\n'
+    '        connecting = false;\n'
+    '        lastFailure = null;\n'
+    '        log("收到断联请求：先关闭 Android VPN，再后台清理 Making 内核");\n'
+    '        // Never await Hysteria2Native.stop() here: StopTunnel can block.\n'
+    '        // Android immediately runs onDestroy() and releases the VPN FD.\n'
+    '        stopSelf();\n'
+    '      }\n'
+    '      return START_NOT_STICKY;\n'
+    '    }\n'
+)
+replace_once(old_stop, new_stop)
+
+start_marker = '  @Override\n  public void onDestroy() {\n'
+end_marker = '  @Override\n  public void onRevoke() {\n'
+if source.count(start_marker) != 1 or source.count(end_marker) != 1:
+    raise SystemExit("Unable to identify one onDestroy block")
+begin = source.index(start_marker)
+end = source.index(end_marker, begin)
+new_destroy = '''  @Override
+  public void onDestroy() {
+    // Service teardown runs on the Android main thread. It MUST NOT wait for
+    // gomobile StopTunnel / Go network workers, which can block on active flows.
+    destroyed = true;
+    stopping = true;
+    connecting = false;
+    Thread watcher = connectionMonitor;
+    if (watcher != null) watcher.interrupt();
+
+    // Release Android's VPN endpoint and foreground notification first.
+    // This is independent of the speed of the native engine cleanup.
+    ParcelFileDescriptor descriptor = vpnInterface;
+    vpnInterface = null;
+    if (descriptor != null) {
+      try { descriptor.close(); }
+      catch (IOException e) { log("Android VPN 关闭接口异常"); }
+    }
+    if (core == ownedCore) {
+      tunnelEstablished = false;
+      forwardingVerified = false;
+      core = null;
+    }
+    if (ownedHttpPassword != null && ownedHttpPassword.equals(localHttpPassword))
+      localHttpPassword = null;
+
+    try { stopForeground(STOP_FOREGROUND_REMOVE); }
+    catch (RuntimeException ignored) {}
+    try {
+      finishStage(lastFailure == null ? "VPN 接口已关闭，正在清理原生内核"
+          : "连接失败，VPN 接口已关闭，正在清理内核");
+    } catch (RuntimeException ignored) {}
+    serviceAlive = false;
+
+    final ProxyCore retiringCore = ownedCore;
+    nativeShutdownInProgress = true;
+    Thread cleanup = new Thread(() -> {
+      try {
+        if (Hysteria2Native.isPackaged()) Hysteria2Native.stop();
+        log("Making 原生内核已停止");
+      } catch (Exception | LinkageError e) {
+        log("原生停止失败：" + e.getClass().getSimpleName());
+      } finally {
+        try {
+          if (retiringCore != null) retiringCore.stop();
+        } catch (RuntimeException e) {
+          log("本地代理清理异常：" + e.getClass().getSimpleName());
+        }
+        nativeShutdownInProgress = false;
+        stopping = false;
+        log("VPN 服务和 Making 内核清理流程结束");
+        try { finishStage("VPN 服务已停止"); }
+        catch (RuntimeException ignored) {}
+      }
+    }, "making-native-teardown");
+    cleanup.setDaemon(true);
+    cleanup.start();
+
+    super.onDestroy();
+  }
+
+'''
+source = source[:begin] + new_destroy + source[end:]
+# Guard JNI startup after a stop was requested, including the race where the
+# worker passed its first destroyed check and native handshake has not begun.
+replace_once(
+    '                  nativeStartInFlight = true;\n'
+    '                  try {\n',
+    '                  if (destroyed || stopping) return;\n'
+    '                  nativeStartInFlight = true;\n'
+    '                  try {\n',
+)
+path.write_text(source, encoding="utf-8")
+print("Making disconnect v2: Android VPN released before asynchronous Go teardown")
