@@ -146,6 +146,8 @@ fun CheemsApp() {
     var status by remember { mutableStateOf("尚未连接") }
     var running by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
+    var stopping by remember { mutableStateOf(false) }
+    var stopRequested by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
     var diagnostics by remember { mutableStateOf("") }
     var upSpeed by remember { mutableLongStateOf(0L) }
@@ -205,11 +207,14 @@ fun CheemsApp() {
                 val nextStatus = CheemsBridge.status()
                 val nextRunning = CheemsBridge.running()
                 val nextBusy = CheemsBridge.connecting()
+                val nextStopping = CheemsBridge.stopping()
                 val currentUp = CheemsBridge.up()
                 val currentDown = CheemsBridge.down()
                 status = nextStatus
                 running = nextRunning
                 busy = nextBusy
+                stopping = nextStopping
+                if (stopRequested && !nextStopping && !nextRunning && !nextBusy) stopRequested = false
                 if (!nextBusy && message == "正在启动 Making 内核") message = ""
                 upSpeed = (currentUp - previousUp).coerceAtLeast(0L)
                 downSpeed = (currentDown - previousDown).coerceAtLeast(0L)
@@ -272,17 +277,35 @@ fun CheemsApp() {
                             Text("Making · 独立原生内核（不含 Mihomo）", color = Color.LightGray, fontSize = 12.sp)
                             Spacer(Modifier.height(20.dp))
                             Button(onClick = {
-                                if (running || busy) {
-                                    CheemsBridge.disconnect(context)
-                                    message = "正在断开 VPN"
+                                if (stopping || stopRequested) {
+                                    message = "正在清理 VPN，请稍后"
+                                } else if (running || busy) {
+                                    stopRequested = true
+                                    message = "已收到断开请求，正在关闭 VPN…"
+                                    scope.launch {
+                                        try {
+                                            val accepted = withContext(Dispatchers.IO) {
+                                                CheemsBridge.disconnect(context)
+                                            }
+                                            if (!accepted) {
+                                                message = "未找到运行中的 VPN 服务"
+                                                stopRequested = false
+                                            }
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            message = "断开请求失败：" + e.javaClass.simpleName
+                                            stopRequested = false
+                                        }
+                                    }
                                 } else if (nodes.isEmpty()) {
                                     tab = 2; message = "请先导入配置"
                                 } else {
                                     val intent = VpnService.prepare(context)
                                     if (intent == null) connect() else permission.launch(intent)
                                 }
-                            }, enabled = !importing, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-                                Text(if (busy) "断开正在连接的 VPN" else if (running) "断开连接" else "连接")
+                            }, enabled = !importing && !stopping && !stopRequested, modifier = Modifier.fillMaxWidth().height(56.dp)) {
+                                Text(if (stopping || stopRequested) "正在断开 VPN…" else if (busy) "断开正在连接的 VPN" else if (running) "断开连接" else "连接")
                             }
                         }
                         Spacer(Modifier.height(14.dp))

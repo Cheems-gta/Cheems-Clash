@@ -77,5 +77,16 @@ replace_once(
     '    super.onDestroy();\n',
 )
 
+
+# Keep Android onDestroy responsive: native/Go teardown can wait on active sockets.
+replace_once(
+    "  static volatile boolean connecting;\n",
+    "  static volatile boolean connecting;\n  static volatile boolean shuttingDown;\n",
+)
+start = source.index("  @Override\n  public void onDestroy() {\n")
+end = source.index("  @Override\n  public void onRevoke()", start)
+if end <= start: raise SystemExit("Cannot identify VPN onDestroy lifecycle block")
+source = source[:start] + "  @Override\n  public void onDestroy() {\n    destroyed = true;\n    shuttingDown = true;\n    Thread watcher = connectionMonitor;\n    if (watcher != null) watcher.interrupt();\n    updateConnecting(false);\n    final ProxyCore oldProxy = ownedCore;\n    final ParcelFileDescriptor oldInterface = vpnInterface;\n    vpnInterface = null;\n    final boolean hadTunnel = tunnelEstablished;\n    final boolean hadHandshake = nativeStartInFlight;\n    if (core == ownedCore) {\n      tunnelEstablished = false;\n      forwardingVerified = false;\n      core = null;\n    }\n    if (ownedHttpPassword != null && ownedHttpPassword.equals(localHttpPassword))\n      localHttpPassword = null;\n    // Never call Go StopTunnel/Stop from Android's main service thread.\n    // Keep new connections blocked until all native resources are released.\n    Thread cleanup = new Thread(() -> {\n      try {\n        log(\"正在后台关闭本地代理\");\n        try { if (oldProxy != null) oldProxy.stop(); }\n        catch (RuntimeException e) { log(\"本地代理关闭异常：\" + e.getClass().getSimpleName()); }\n        try {\n          if (hadHandshake || hadTunnel || Hysteria2Native.isRunning()) {\n            if (Hysteria2Native.isPackaged()) Hysteria2Native.stop();\n          }\n        } catch (Exception | LinkageError e) {\n          log(\"原生连接关闭异常：\" + e.getClass().getSimpleName());\n        }\n      } finally {\n        if (oldInterface != null) {\n          try { oldInterface.close(); } catch (IOException ignored) {}\n        }\n        try {\n          finishStage(lastFailure == null ? \"用户或系统已停止 VPN\" : \"启动或连接失败，服务已关闭\");\n          log(\"VPN 已停止，原生清理完成\");\n        } catch (RuntimeException ignored) {}\n        shuttingDown = false;\n      }\n    }, \"making-vpn-cleanup\");\n    cleanup.start();\n    try { stopForeground(STOP_FOREGROUND_REMOVE); }\n    catch (RuntimeException ignored) {}\n    super.onDestroy();\n  }\n\n" + source[end:]
+
 path.write_text(source, encoding="utf-8")
 print("Making Core timeout/teardown guard applied")
