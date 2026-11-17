@@ -129,3 +129,17 @@ jobs:
               --title "Doreena stable-base cosmetic preview" \
               --notes "Native Cheems Core integration, no Mihomo. CI passed for commit ${GITHUB_SHA}. TLS certificate verification bypass enabled by requested compatibility policy; server impersonation risk. Live VPN connectivity requires device testing."
           fi
+
+      - name: Publish Making disconnect preview APK
+        if: github.ref == 'refs/heads/fix/making-disconnect-release-tun'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk dist/Cheems-Clash-Making-Disconnect-Fix.apk
+          sha256sum dist/Cheems-Clash-Making-Disconnect-Fix.apk > dist/SHA256SUMS.txt
+          tag="making-disconnect-fix-${GITHUB_SHA:0:8}"
+          gh release create "$tag" dist/Cheems-Clash-Making-Disconnect-Fix.apk dist/SHA256SUMS.txt \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Cheems Clash Making disconnect fix preview (${GITHUB_SHA:0:8})" \
+            --notes "Cheems Core / Making disconnect UI responsiveness and TUN release fixes. CI compile, native tests and APK signing checks completed. Physical Android disconnect and reconnect behavior has not been independently verified. The compatibility mode can bypass TLS certificate verification; only connect to trusted servers."
