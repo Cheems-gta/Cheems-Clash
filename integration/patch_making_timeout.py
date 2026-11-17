@@ -556,3 +556,59 @@ shutdown_code = '''  /**
 source = source[:begin] + shutdown_code + source[end:]
 path.write_text(source, encoding="utf-8")
 print("Making: direct live TUN closure independent of bound service onDestroy")
+
+
+# AnyTLS protocol latency is the time to establish a separate protected TLS
+# session and authenticated AnyTLS outbound stream. NewAnyTLSClient alone only
+# constructs a lazy client and therefore MUST NOT be reported as latency.
+bridge_path = Path("core-upstream/native/quic/mobilebridge/bridge.go")
+go = bridge_path.read_text(encoding="utf-8")
+go += """
+// ProbeAnyTLSWithNetwork measures an authenticated AnyTLS proxy stream, not
+// merely a TCP SYN or the lazy NewAnyTLSClient constructor. It never touches
+// global VPN sessions. The probe runs on a protected physical network.
+func ProbeAnyTLSWithNetwork(host string, port int, sni string,
+    password string, fingerprint string, alpn string,
+    allowUnverifiedTLS bool, customCAPEM string,
+    certificateSHA256 string, network Network) (int64, error) {
+    if network == nil || host == "" || password == "" || port < 1 || port > 65535 {
+        return 0, errors.New("invalid protected AnyTLS probe target")
+    }
+    ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+    defer cancel()
+    var protocols []string
+    if alpn != "" {
+        protocols = strings.Split(alpn, ",")
+    }
+    started := time.Now()
+    candidate, err := quictransport.NewAnyTLSClient(ctx, quictransport.AnyTLSConfig{
+        Address: net.JoinHostPort(host, strconv.Itoa(port)),
+        ServerName: sni,
+        Password: password,
+        Fingerprint: fingerprint,
+        ALPN: protocols,
+        Timeout: 6*time.Second,
+        AllowUnverifiedTLS: allowUnverifiedTLS,
+        TrustedCAPEM: customCAPEM,
+        CertificateSHA256: certificateSHA256,
+        Network: network,
+    })
+    if err != nil {
+        return 0, err
+    }
+    defer candidate.Close()
+    // The client is lazy. Force an actual authenticated outbound stream.
+    stream, err := candidate.OpenTCP(ctx, "example.com", 80)
+    if err != nil {
+        return 0, err
+    }
+    elapsed := time.Since(started).Milliseconds()
+    _ = stream.Close()
+    if elapsed < 1 {
+        elapsed = 1
+    }
+    return elapsed, nil
+}
+"""
+bridge_path.write_text(go, encoding="utf-8")
+print("AnyTLS authenticated stream latency probe added")
