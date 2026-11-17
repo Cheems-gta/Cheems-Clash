@@ -2,6 +2,12 @@ package win.cheems.core;
 
 import android.content.Context;
 import android.content.Intent;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.os.ParcelFileDescriptor;
+import java.io.IOException;
+import java.net.InetAddress;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.util.List;
@@ -51,34 +57,72 @@ public final class CheemsBridge {
   }
 
   public static void disconnect(Context context) {
-    // Do not start the VPN service again just to ask it to stop. Android's
-    // stopService path enters onDestroy directly and releases the TUN FD.
+    // A system-bound VpnService can outlive stopService(). Contact the active
+    // instance so Android's VPN FD is closed even if onDestroy() is delayed.
     CoreService.stopping = true;
+    CoreService service = CoreService.activeInstance;
+    if (service != null) {
+      service.requestImmediateDisconnect();
+      return;
+    }
     boolean requested = context.stopService(new Intent(context, CoreService.class));
     if (!requested && !CoreService.serviceAlive && !CoreService.nativeShutdownInProgress)
       CoreService.stopping = false;
   }
 
-  /** Actual Hysteria2 QUIC authentication/handshake latency; not TCP ping. */
-  public static long measureNodeLatency(String profile, int index) throws Exception {
-    CoreService service = CoreService.activeInstance;
-    if (service == null || !CoreService.serviceAlive || !CoreService.tunnelEstablished
-        || CoreService.stopping || CoreService.nativeShutdownInProgress)
-      throw new IllegalStateException("请先连接 VPN，再测试节点延迟");
+  /** Choose an actual non-VPN network, also when Cheems VPN is stopped. */
+  private static Network physicalNetwork(Context context) {
+    ConnectivityManager cm = context.getSystemService(ConnectivityManager.class);
+    if (cm == null) throw new IllegalStateException("无法获取 Android 网络服务");
+    Network fallback = null;
+    for (Network candidate : cm.getAllNetworks()) {
+      NetworkCapabilities cap = cm.getNetworkCapabilities(candidate);
+      if (cap == null
+          || !cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+          || !cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET))
+        continue;
+      if (cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) return candidate;
+      if (fallback == null) fallback = candidate;
+    }
+    if (fallback == null) throw new IllegalStateException("未找到可用的 Wi-Fi 或移动网络");
+    return fallback;
+  }
+
+  /** Measures a real HY2 QUIC handshake, not misleading TCP port latency. */
+  public static long measureNodeLatency(Context context, String profile, int index) throws Exception {
+    if (CoreService.stopping || CoreService.nativeShutdownInProgress)
+      throw new IllegalStateException("VPN 正在断开，请稍后测速");
     List<Node> nodes = Subscription.parse(profile);
     if (index < 0 || index >= nodes.size()) throw new IllegalArgumentException("节点下标无效");
     Node node = nodes.get(index);
     if (!node.supported() || !"hysteria2".equals(node.type))
       throw new UnsupportedOperationException("此协议尚未提供独立握手测速");
-
+    Network physical = physicalNetwork(context);
+    CoreService service = CoreService.activeInstance;
     Class<?> networkType = Class.forName("go.mobilebridge.Network");
     Object network = java.lang.reflect.Proxy.newProxyInstance(
         networkType.getClassLoader(), new Class<?>[]{networkType},
         (proxy, method, args) -> {
-          if ("protect".equals(method.getName()))
-            return service.protectAndBind(((Number)args[0]).longValue());
-          if ("resolve".equals(method.getName()))
-            return service.resolveOnPhysical((String) args[0]);
+          if ("protect".equals(method.getName())) {
+            long rawFd = ((Number) args[0]).longValue();
+            if (rawFd < 0 || rawFd > Integer.MAX_VALUE) return false;
+            if (service != null && CoreService.serviceAlive
+                && !CoreService.stopping && !CoreService.nativeShutdownInProgress)
+              return service.protectAndBind(rawFd);
+            // Without an active VPN, explicitly bind to a physical Android
+            // network. fromFd duplicates the descriptor and closes the copy.
+            try (ParcelFileDescriptor fd = ParcelFileDescriptor.fromFd((int)rawFd)) {
+              physical.bindSocket(fd.getFileDescriptor());
+              return true;
+            } catch (IOException | RuntimeException error) {
+              return false;
+            }
+          }
+          if ("resolve".equals(method.getName())) {
+            InetAddress[] answers = physical.getAllByName((String)args[0]);
+            if (answers.length == 0) throw new IOException("Physical DNS returned no addresses");
+            return answers[0].getHostAddress();
+          }
           if ("toString".equals(method.getName())) return "CheemsLatencyPhysicalNetwork";
           throw new UnsupportedOperationException(method.getName());
         });
