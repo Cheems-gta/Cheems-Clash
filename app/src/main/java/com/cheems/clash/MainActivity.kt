@@ -3,6 +3,7 @@ package com.cheems.clash
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.Context
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
@@ -132,9 +133,9 @@ private fun speed(bytes: Long): String = when {
     else -> bytes.toString() + " B/s"
 }
 
-private suspend fun probeLatency(profile: String, index: Int): String = withContext(Dispatchers.IO) {
+private suspend fun probeLatency(context: Context, profile: String, index: Int): String = withContext(Dispatchers.IO) {
     try {
-        CheemsBridge.measureNodeLatency(profile, index).toString() + " ms · HY2 握手"
+        CheemsBridge.measureNodeLatency(context.applicationContext, profile, index).toString() + " ms · HY2 握手"
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
@@ -407,7 +408,7 @@ fun CheemsApp() {
                     1 -> {
                         Text("已导入 " + nodes.size + " 个节点 · 连接前选择", color = Color.LightGray, fontSize = 13.sp)
                         Spacer(Modifier.height(8.dp))
-                        Text("测速为真实 Hysteria2 QUIC 握手耗时；需保持 VPN 已连接，不会切换正在使用的节点。",
+                        Text("测速为真实 Hysteria2 QUIC 握手耗时，可在未连接 VPN 时测试，不会切换当前节点。",
                             color = Color.LightGray, fontSize = 12.sp)
                         Spacer(Modifier.height(12.dp))
                         Button(onClick = {
@@ -422,7 +423,7 @@ fun CheemsApp() {
                                             launch {
                                                 limit.withPermit {
                                                     nodeLatencies[node.index] = "测速中…"
-                                                    val result = probeLatency(snapshot, node.index)
+                                                    val result = probeLatency(context, snapshot, node.index)
                                                     nodeLatencies[node.index] = result
                                                 }
                                             }
@@ -434,7 +435,7 @@ fun CheemsApp() {
                                     testingAllNodes = false
                                 }
                             }
-                        }, enabled = running && !busy && !disconnectRequested && !testingAllNodes &&
+                        }, enabled = !busy && !disconnectRequested && !testingAllNodes &&
                             nodes.any { it.supported && it.protocol == "hysteria2" },
                             modifier = Modifier.fillMaxWidth()) {
                             Text(if (testingAllNodes) "正在测试 Hysteria2 节点…" else "一键测试全部节点延迟")
@@ -468,9 +469,9 @@ fun CheemsApp() {
                                         nodeLatencies[node.index] = "测速中…"
                                         val snapshot = profile
                                         scope.launch {
-                                            nodeLatencies[node.index] = probeLatency(snapshot, node.index)
+                                            nodeLatencies[node.index] = probeLatency(context, snapshot, node.index)
                                         }
-                                    }, enabled = running && !busy && !disconnectRequested && !testingAllNodes &&
+                                    }, enabled = !busy && !disconnectRequested && !testingAllNodes &&
                                         node.supported && node.protocol == "hysteria2" &&
                                         nodeLatencies[node.index] != "测速中…") {
                                         Text("测速")
