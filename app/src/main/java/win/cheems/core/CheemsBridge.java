@@ -51,21 +51,48 @@ public final class CheemsBridge {
   }
 
   public static void disconnect(Context context) {
-    if (!CoreService.serviceAlive) {
-      context.stopService(new Intent(context, CoreService.class));
-      return;
-    }
-    CoreService.stopping = true; // Immediate status feedback on the UI thread.
+    // Do not start the VPN service again just to ask it to stop. Android's
+    // stopService path enters onDestroy directly and releases the TUN FD.
+    CoreService.stopping = true;
+    boolean requested = context.stopService(new Intent(context, CoreService.class));
+    if (!requested && !CoreService.serviceAlive && !CoreService.nativeShutdownInProgress)
+      CoreService.stopping = false;
+  }
+
+  /** Actual Hysteria2 QUIC authentication/handshake latency; not TCP ping. */
+  public static long measureNodeLatency(String profile, int index) throws Exception {
+    CoreService service = CoreService.activeInstance;
+    if (service == null || !CoreService.serviceAlive || !CoreService.tunnelEstablished
+        || CoreService.stopping || CoreService.nativeShutdownInProgress)
+      throw new IllegalStateException("请先连接 VPN，再测试节点延迟");
+    List<Node> nodes = Subscription.parse(profile);
+    if (index < 0 || index >= nodes.size()) throw new IllegalArgumentException("节点下标无效");
+    Node node = nodes.get(index);
+    if (!node.supported() || !"hysteria2".equals(node.type))
+      throw new UnsupportedOperationException("此协议尚未提供独立握手测速");
+
+    Class<?> networkType = Class.forName("go.mobilebridge.Network");
+    Object network = java.lang.reflect.Proxy.newProxyInstance(
+        networkType.getClassLoader(), new Class<?>[]{networkType},
+        (proxy, method, args) -> {
+          if ("protect".equals(method.getName()))
+            return service.protectAndBind(((Number)args[0]).longValue());
+          if ("resolve".equals(method.getName()))
+            return service.resolveOnPhysical((String) args[0]);
+          if ("toString".equals(method.getName())) return "CheemsLatencyPhysicalNetwork";
+          throw new UnsupportedOperationException(method.getName());
+        });
     try {
-      // The foreground service releases Android VPN before Go cleanup.
-      if (context.startService(new Intent(context, CoreService.class)
-          .setAction(CoreService.ACTION_STOP_VPN)) == null) {
-        context.stopService(new Intent(context, CoreService.class));
-      }
-    } catch (RuntimeException e) {
-      // Android may reject a startService call in some lifecycle states.
-      // stopService must still release Android's VPN via onDestroy().
-      context.stopService(new Intent(context, CoreService.class));
+      Object result = Class.forName("go.mobilebridge.Mobilebridge")
+          .getMethod("probeHysteria2WithNetwork", String.class, long.class,
+              String.class, String.class, boolean.class, String.class,
+              String.class, networkType)
+          .invoke(null, node.host, (long)node.port, node.sni, node.password,
+              true, "", "", network);
+      return Math.max(1L, ((Number)result).longValue());
+    } catch (java.lang.reflect.InvocationTargetException e) {
+      Throwable cause = e.getCause();
+      throw new IllegalStateException("节点握手失败", cause == null ? e : cause);
     }
   }
   public static boolean stopping() { return CoreService.stopping || CoreService.nativeShutdownInProgress; }

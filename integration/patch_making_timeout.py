@@ -358,3 +358,88 @@ if native_source.count(native_before) != 1:
 native_path.write_text(native_source.replace(native_before, native_after, 1),
                        encoding="utf-8")
 print("Making TUN teardown: close device before waiting for stack")
+
+
+# v3: direct Android stopService releases the VPN FD without restarting the
+# foreground service, and an active service reference supports protected QUIC
+# latency probes without changing the selected/active node.
+replace_once(
+    '  static volatile boolean nativeShutdownInProgress;\n',
+    '  static volatile boolean nativeShutdownInProgress;\n'
+    '  static volatile CoreService activeInstance;\n',
+)
+replace_once(
+    '    destroyed = false;\n    serviceAlive = true;\n',
+    '    destroyed = false;\n    activeInstance = this;\n    serviceAlive = true;\n',
+)
+replace_once(
+    '    destroyed = true;\n    stopping = true;\n',
+    '    destroyed = true;\n    if (activeInstance == this) activeInstance = null;\n'
+    '    stopping = true;\n',
+)
+path.write_text(source, encoding="utf-8")
+
+# Never leave Go IsRunning=true when TUN cleanup is slow: invalidate the
+# session and cancel dialing *before* awaiting TUN teardown. TUN device is
+# closed immediately and its stack teardown gets a bounded wait.
+bridge_path = Path("core-upstream/native/quic/mobilebridge/bridge.go")
+go = bridge_path.read_text(encoding="utf-8")
+old = "func Stop() {\n\tStopTunnel()\n\tmu.Lock()"
+if go.count(old) != 1:
+    raise SystemExit("Go Stop ordering no longer matches pinned source")
+go = go.replace(old, "func Stop() {\n\tmu.Lock()", 1)
+old = "\tif cancel != nil {\n\t\tcancel()\n\t}\n\tif oldServer != nil {"
+if go.count(old) != 1:
+    raise SystemExit("Go Stop cancellation block no longer matches")
+go = go.replace(old,
+    "\tif cancel != nil {\n\t\tcancel()\n\t}\n\tStopTunnel()\n\tif oldServer != nil {", 1)
+
+# This is a separate, authenticated Hysteria2 QUIC session. It does not
+# mutate the currently selected node or the global VPN backend.
+go += """
+
+// ProbeHysteria2WithNetwork times a complete authenticated QUIC handshake.
+// Physical network protection is required to avoid VPN routing loops.
+func ProbeHysteria2WithNetwork(host string, port int, sni string,
+    password string, allowUnverifiedTLS bool, customCAPEM string,
+    certificateSHA256 string, network Network) (int64, error) {
+    if network == nil || host == "" || password == "" || port < 1 || port > 65535 {
+        return 0, errors.New("invalid protected Hysteria2 probe target")
+    }
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    started := time.Now()
+    candidate, err := quictransport.DialHysteria2(ctx, quictransport.Hysteria2Config{
+        Address: net.JoinHostPort(host, strconv.Itoa(port)),
+        ServerName: sni,
+        Password: password,
+        Timeout: 5*time.Second,
+        AllowUnverifiedTLS: allowUnverifiedTLS,
+        TrustedCAPEM: customCAPEM,
+        CertificateSHA256: certificateSHA256,
+        Network: network,
+    })
+    if err != nil {
+        return 0, err
+    }
+    elapsed := time.Since(started).Milliseconds()
+    _ = candidate.Close()
+    if elapsed < 1 {
+        elapsed = 1
+    }
+    return elapsed, nil
+}
+"""
+bridge_path.write_text(go, encoding="utf-8")
+
+# The pinned sing-tun shutdown occasionally waits for a lingering flow.
+# The Android descriptor is already closed; never block JNI forever on
+# stack.Close, and let its cleanup goroutine complete when it can.
+native_path = Path("core-upstream/native/quic/mobilebridge/vpn_tunnel.go")
+native_source = native_path.read_text(encoding="utf-8")
+old = "\tif device != nil {\n\t\t_ = device.Close()\n\t}\n\tif stack != nil {\n\t\t_ = stack.Close()\n\t}\n}\n"
+new = "\tif device != nil {\n\t\t_ = device.Close()\n\t}\n\tif stack != nil {\n\t\tdone := make(chan struct{})\n\t\tgo func() { defer close(done); _ = stack.Close() }()\n\t\tselect {\n\t\tcase <-done:\n\t\tcase <-time.After(2500 * time.Millisecond):\n\t\t}\n\t}\n}\n"
+if native_source.count(old) != 1:
+    raise SystemExit("Go StopTunnel bounded shutdown block mismatch")
+native_path.write_text(native_source.replace(old, new, 1), encoding="utf-8")
+print("Making stopService + bounded native teardown + HY2 RTT probe enabled")

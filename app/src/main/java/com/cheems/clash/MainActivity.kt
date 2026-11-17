@@ -24,6 +24,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -130,6 +132,19 @@ private fun speed(bytes: Long): String = when {
     else -> bytes.toString() + " B/s"
 }
 
+private suspend fun probeLatency(profile: String, index: Int): String = withContext(Dispatchers.IO) {
+    try {
+        CheemsBridge.measureNodeLatency(profile, index).toString() + " ms · HY2 握手"
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        val reason = e.cause?.message ?: e.message ?: ""
+        if (reason.contains("timeout", ignoreCase = true) ||
+            reason.contains("deadline", ignoreCase = true)) "超时"
+        else "握手失败"
+    }
+}
+
 // JNI status and traffic queries can block while native QUIC/TUN teardown runs.
 // Keep all native status polling off the Compose UI thread.
 private data class BridgeSnapshot(
@@ -162,6 +177,8 @@ fun CheemsApp() {
     var diagnostics by remember { mutableStateOf("") }
     var upSpeed by remember { mutableLongStateOf(0L) }
     var downSpeed by remember { mutableLongStateOf(0L) }
+    val nodeLatencies = remember(profile) { mutableStateMapOf<Int, String>() }
+    var testingAllNodes by remember { mutableStateOf(false) }
     var disconnectRequested by remember { mutableStateOf(false) }
     var disconnectWarned by remember { mutableStateOf(false) }
     var disconnectStartedAt by remember { mutableLongStateOf(0L) }
@@ -383,10 +400,45 @@ fun CheemsApp() {
                         PanelCard {
                             Text("当前节点", color = Green, fontWeight = FontWeight.Bold)
                             Text(nodes.firstOrNull { it.index == selected }?.name ?: "未选择", color = Color.White)
+                            Text("节点延迟：" + (nodeLatencies[selected] ?: "未测速"),
+                                color = Color.LightGray, fontSize = 12.sp)
                         }
                     }
                     1 -> {
                         Text("已导入 " + nodes.size + " 个节点 · 连接前选择", color = Color.LightGray, fontSize = 13.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Text("测速为真实 Hysteria2 QUIC 握手耗时；需保持 VPN 已连接，不会切换正在使用的节点。",
+                            color = Color.LightGray, fontSize = 12.sp)
+                        Spacer(Modifier.height(12.dp))
+                        Button(onClick = {
+                            testingAllNodes = true
+                            val snapshot = profile
+                            val targets = nodes.filter { it.supported && it.protocol == "hysteria2" }
+                            scope.launch {
+                                try {
+                                    val limit = Semaphore(3)
+                                    coroutineScope {
+                                        targets.map { node ->
+                                            launch {
+                                                limit.withPermit {
+                                                    nodeLatencies[node.index] = "测速中…"
+                                                    val result = probeLatency(snapshot, node.index)
+                                                    nodeLatencies[node.index] = result
+                                                }
+                                            }
+                                        }.joinAll()
+                                    }
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } finally {
+                                    testingAllNodes = false
+                                }
+                            }
+                        }, enabled = running && !busy && !disconnectRequested && !testingAllNodes &&
+                            nodes.any { it.supported && it.protocol == "hysteria2" },
+                            modifier = Modifier.fillMaxWidth()) {
+                            Text(if (testingAllNodes) "正在测试 Hysteria2 节点…" else "一键测试全部节点延迟")
+                        }
                         Spacer(Modifier.height(12.dp))
                         nodes.forEach { node ->
                             PanelCard {
@@ -397,12 +449,32 @@ fun CheemsApp() {
                                     color = Color.LightGray, fontSize = 12.sp)
                                 if (!node.supported) Text(node.reason, color = Color(0xFFFFB4AB), fontSize = 12.sp)
                                 Spacer(Modifier.height(6.dp))
-                                OutlinedButton(onClick = {
-                                    selected = node.index
-                                    prefs.edit().putInt("core_selected_index", selected).apply()
-                                    message = "已选择：" + node.name
-                                }, enabled = node.supported && !running && !busy) {
-                                    Text(if (selected == node.index) "当前选择" else "选择节点")
+                                Text(
+                                    if (node.protocol == "hysteria2" && node.supported)
+                                        "延迟：" + (nodeLatencies[node.index] ?: "未测速")
+                                    else "延迟：暂不支持此协议的握手测速",
+                                    color = Green, fontSize = 13.sp
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    OutlinedButton(onClick = {
+                                        selected = node.index
+                                        prefs.edit().putInt("core_selected_index", selected).apply()
+                                        message = "已选择：" + node.name
+                                    }, enabled = node.supported && !running && !busy) {
+                                        Text(if (selected == node.index) "当前选择" else "选择节点")
+                                    }
+                                    OutlinedButton(onClick = {
+                                        nodeLatencies[node.index] = "测速中…"
+                                        val snapshot = profile
+                                        scope.launch {
+                                            nodeLatencies[node.index] = probeLatency(snapshot, node.index)
+                                        }
+                                    }, enabled = running && !busy && !disconnectRequested && !testingAllNodes &&
+                                        node.supported && node.protocol == "hysteria2" &&
+                                        nodeLatencies[node.index] != "测速中…") {
+                                        Text("测速")
+                                    }
                                 }
                             }
                             Spacer(Modifier.height(10.dp))
