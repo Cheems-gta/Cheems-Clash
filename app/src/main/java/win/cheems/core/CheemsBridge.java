@@ -34,6 +34,8 @@ public final class CheemsBridge {
   }
 
   public static void connect(Context context, String profile, int index) throws Exception {
+    if (CoreService.shuttingDown)
+      throw new IllegalStateException("正在清理上一条 VPN 连接，请稍后重试");
     if (CoreService.connecting || CoreService.tunnelEstablished)
       throw new IllegalStateException("当前已有 VPN 连接或正在连接，请先断开");
     List<Node> nodes = Subscription.parse(profile);
@@ -49,14 +51,30 @@ public final class CheemsBridge {
     context.startForegroundService(intent);
   }
 
-  public static void disconnect(Context context) {
-    context.stopService(new Intent(context, CoreService.class));
+  public static boolean disconnect(Context context) {
+    if (CoreService.shuttingDown) return true;
+    CoreService.shuttingDown = true;
+    try {
+      CoreService.log("用户点击断开连接");
+      boolean accepted = context.stopService(new Intent(context, CoreService.class));
+      if (!accepted) {
+        CoreService.shuttingDown = false;
+        CoreService.log("停止请求未找到运行中的 VPN 服务");
+      }
+      return accepted;
+    } catch (RuntimeException e) {
+      CoreService.shuttingDown = false;
+      CoreService.log("停止请求异常：" + e.getClass().getSimpleName());
+      throw e;
+    }
   }
+  public static boolean stopping() { return CoreService.shuttingDown; }
   public static boolean running() {
     return CoreService.tunnelEstablished && Hysteria2Native.isRunning();
   }
   public static boolean connecting() { return CoreService.connecting; }
   public static String status() {
+    if (CoreService.shuttingDown) return "正在断开 VPN…";
     if (CoreService.lastFailure != null && !CoreService.lastFailure.isEmpty())
       return "连接失败：" + CoreService.lastFailure;
     if (CoreService.connecting) return "正在连接…";
