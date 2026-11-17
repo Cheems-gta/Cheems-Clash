@@ -129,6 +129,14 @@ private fun speed(bytes: Long): String = when {
     else -> bytes.toString() + " B/s"
 }
 
+private data class BridgeSnapshot(
+    val status: String,
+    val running: Boolean,
+    val busy: Boolean,
+    val up: Long,
+    val down: Long
+)
+
 @Composable
 fun CheemsApp() {
     val context = LocalContext.current
@@ -202,11 +210,17 @@ fun CheemsApp() {
         while (true) {
             try {
                 // A failed native start must not crash the Compose polling coroutine.
-                val nextStatus = CheemsBridge.status()
-                val nextRunning = CheemsBridge.running()
-                val nextBusy = CheemsBridge.connecting()
-                val currentUp = CheemsBridge.up()
-                val currentDown = CheemsBridge.down()
+                // Binder/Go native status can block while QUIC shuts down; never poll it on the Compose main thread.
+                val (nextStatus, nextRunning, nextBusy, currentUp, currentDown) =
+                    withContext(Dispatchers.IO) {
+                        BridgeSnapshot(
+                            CheemsBridge.status(),
+                            CheemsBridge.running(),
+                            CheemsBridge.connecting(),
+                            CheemsBridge.up(),
+                            CheemsBridge.down()
+                        )
+                    }
                 status = nextStatus
                 running = nextRunning
                 busy = nextBusy
