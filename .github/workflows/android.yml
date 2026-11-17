@@ -97,6 +97,9 @@ jobs:
           javap -classpath /tmp/cheems-mobilebridge.jar go.mobilebridge.Mobilebridge > /tmp/api.txt
           grep -q "startTunnel" /tmp/api.txt
           grep -q "startWithNetwork" /tmp/api.txt
+          # The UI calls this via reflection; fail the build rather than shipping
+          # an APK whose latency button always fails at runtime.
+          grep -q "probeHysteria2WithNetwork" /tmp/api.txt
           gradle :app:assembleDebug --stacktrace --no-daemon
           test -s app/build/outputs/apk/debug/app-debug.apk
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose app/build/outputs/apk/debug/app-debug.apk
