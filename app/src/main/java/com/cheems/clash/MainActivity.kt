@@ -146,6 +146,26 @@ private suspend fun probeLatency(context: Context, profile: String, index: Int):
     }
 }
 
+// Limit concurrent authenticated Hysteria2 measurements on mobile networks.
+private suspend fun probeNodeBatch(
+    context: Context,
+    profile: String,
+    nodes: List<NodeRow>,
+    latencies: MutableMap<Int, String>
+) {
+    val limit = Semaphore(3)
+    coroutineScope {
+        nodes.map { node ->
+            launch {
+                limit.withPermit {
+                    latencies[node.index] = "测速中…"
+                    latencies[node.index] = probeLatency(context, profile, node.index)
+                }
+            }
+        }.joinAll()
+    }
+}
+
 // JNI status and traffic queries can block while native QUIC/TUN teardown runs.
 // Keep all native status polling off the Compose UI thread.
 private data class BridgeSnapshot(
@@ -180,6 +200,7 @@ fun CheemsApp() {
     var downSpeed by remember { mutableLongStateOf(0L) }
     val nodeLatencies = remember(profile) { mutableStateMapOf<Int, String>() }
     var testingAllNodes by remember { mutableStateOf(false) }
+    var autoLatencyCompleted by remember(profile) { mutableStateOf(false) }
     var disconnectRequested by remember { mutableStateOf(false) }
     var disconnectWarned by remember { mutableStateOf(false) }
     var disconnectStartedAt by remember { mutableLongStateOf(0L) }
@@ -310,6 +331,27 @@ fun CheemsApp() {
         }
     }
 
+    // Automatically populate ms values on the node screen once per profile.
+    // Keep at most three handshakes active and cancel safely on navigation.
+    LaunchedEffect(tab, profile, busy, disconnectRequested) {
+        if (tab != 1 || busy || disconnectRequested || testingAllNodes || autoLatencyCompleted) return@LaunchedEffect
+        val targets = nodes.filter { it.supported && it.protocol == "hysteria2" }
+        if (targets.isEmpty()) return@LaunchedEffect
+        autoLatencyCompleted = true
+        testingAllNodes = true
+        try {
+            probeNodeBatch(context, profile, targets, nodeLatencies)
+        } catch (e: CancellationException) {
+            autoLatencyCompleted = false
+            throw e
+        } finally {
+            targets.forEach { node ->
+                if (nodeLatencies[node.index] == "测速中…") nodeLatencies[node.index] = "未完成"
+            }
+            testingAllNodes = false
+        }
+    }
+
     MaterialTheme(colorScheme = darkColorScheme(primary = Green, background = Background, surface = Panel)) {
         Column(Modifier.fillMaxSize().background(Background).systemBarsPadding().padding(20.dp)) {
             Text("CHEEMS  /  CLASH", color = Green, fontSize = 14.sp, fontWeight = FontWeight.Bold)
@@ -408,7 +450,7 @@ fun CheemsApp() {
                     1 -> {
                         Text("已导入 " + nodes.size + " 个节点 · 连接前选择", color = Color.LightGray, fontSize = 13.sp)
                         Spacer(Modifier.height(8.dp))
-                        Text("测速为真实 Hysteria2 QUIC 握手耗时，可在未连接 VPN 时测试，不会切换当前节点。",
+                        Text("进入此页自动测量 Hysteria2 握手延迟（ms），最多同时 3 个；也可手动重新测速。",
                             color = Color.LightGray, fontSize = 12.sp)
                         Spacer(Modifier.height(12.dp))
                         Button(onClick = {
@@ -417,21 +459,13 @@ fun CheemsApp() {
                             val targets = nodes.filter { it.supported && it.protocol == "hysteria2" }
                             scope.launch {
                                 try {
-                                    val limit = Semaphore(3)
-                                    coroutineScope {
-                                        targets.map { node ->
-                                            launch {
-                                                limit.withPermit {
-                                                    nodeLatencies[node.index] = "测速中…"
-                                                    val result = probeLatency(context, snapshot, node.index)
-                                                    nodeLatencies[node.index] = result
-                                                }
-                                            }
-                                        }.joinAll()
-                                    }
+                                    probeNodeBatch(context, snapshot, targets, nodeLatencies)
                                 } catch (e: CancellationException) {
                                     throw e
                                 } finally {
+                                    targets.forEach { node ->
+                                        if (nodeLatencies[node.index] == "测速中…") nodeLatencies[node.index] = "未完成"
+                                    }
                                     testingAllNodes = false
                                 }
                             }
