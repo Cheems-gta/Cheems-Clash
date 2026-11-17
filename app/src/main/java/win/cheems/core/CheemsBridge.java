@@ -56,6 +56,7 @@ public final class CheemsBridge {
       throw new IllegalStateException("无法发送 VPN 断开指令");
   }
   public static boolean stopping() { return CoreService.stopping; }
+  public static boolean canDisconnect() { return CoreService.serviceAlive || CoreService.connecting || CoreService.tunnelEstablished || CoreService.stopping; }
   public static boolean running() {
     return CoreService.tunnelEstablished && Hysteria2Native.isRunning();
   }
