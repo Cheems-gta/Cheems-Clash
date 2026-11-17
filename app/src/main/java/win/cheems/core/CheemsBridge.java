@@ -5,6 +5,7 @@ import android.content.Intent;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.util.List;
+import win.cheems.core.net.LocalProxyProbe;
 import win.cheems.core.net.Hysteria2Native;
 import win.cheems.core.net.Node;
 import win.cheems.core.net.Subscription;
@@ -34,7 +35,7 @@ public final class CheemsBridge {
   }
 
   public static void connect(Context context, String profile, int index) throws Exception {
-    if (CoreService.connecting || CoreService.tunnelEstablished)
+    if (CoreService.serviceAlive || CoreService.connecting || CoreService.tunnelEstablished || CoreService.stopping)
       throw new IllegalStateException("当前已有 VPN 连接或正在连接，请先断开");
     List<Node> nodes = Subscription.parse(profile);
     if (index < 0 || index >= nodes.size()) throw new IllegalArgumentException("请选择一个节点");
@@ -50,13 +51,34 @@ public final class CheemsBridge {
   }
 
   public static void disconnect(Context context) {
-    context.stopService(new Intent(context, CoreService.class));
+    if (!CoreService.serviceAlive) {
+      context.stopService(new Intent(context, CoreService.class));
+      return;
+    }
+    // Route STOP through onStartCommand. The service stops the native engine
+    // on its own worker thread, then closes Android's VPN interface.
+    context.startService(new Intent(context, CoreService.class)
+        .setAction(CoreService.ACTION_STOP_VPN));
+  }
+  public static boolean stopping() { return CoreService.stopping; }
+  public static boolean serviceAlive() { return CoreService.serviceAlive; }
+  public static String verifyConnection() throws Exception {
+    if (CoreService.stopping) throw new IllegalStateException("正在断联，无法检测");
+    if (!CoreService.tunnelEstablished) throw new IllegalStateException("Android VPN 尚未建立");
+    if (!Hysteria2Native.isRunning()) throw new IllegalStateException("Making 节点会话已经中断");
+    if (!CoreService.forwardingVerified) throw new IllegalStateException("节点转发尚未验证成功");
+    LocalProxyProbe.Result result = LocalProxyProbe.check(CoreService.localHttpPassword);
+    if (CoreService.stopping || !CoreService.tunnelEstablished || !Hysteria2Native.isRunning())
+      throw new IllegalStateException("检测期间 VPN 已断开");
+    return "连接正常 · VPN、Making 节点及双向 TCP 转发已通过 · "
+        + result.elapsedMs + " ms · " + result.responseStatus;
   }
   public static boolean running() {
     return CoreService.tunnelEstablished && Hysteria2Native.isRunning();
   }
-  public static boolean connecting() { return CoreService.connecting; }
+  public static boolean connecting() { return CoreService.connecting || CoreService.stopping; }
   public static String status() {
+    if (CoreService.stopping) return "正在断开 VPN…";
     if (CoreService.lastFailure != null && !CoreService.lastFailure.isEmpty())
       return "连接失败：" + CoreService.lastFailure;
     if (CoreService.connecting) return "正在连接…";
