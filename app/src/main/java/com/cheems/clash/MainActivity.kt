@@ -150,6 +150,13 @@ fun CheemsApp() {
     var diagnostics by remember { mutableStateOf("") }
     var upSpeed by remember { mutableLongStateOf(0L) }
     var downSpeed by remember { mutableLongStateOf(0L) }
+    val startupPrefs = remember { context.getSharedPreferences("vpn_startup", 0) }
+    fun recentCrash(): String = if (startupPrefs.getBoolean("crash_pending", false)) {
+        "最近一次进程异常：" + startupPrefs.getString("crash_type", "未知") +
+            " · " + startupPrefs.getString("crash_thread", "未知线程") +
+            " · " + startupPrefs.getString("crash_site", "unknown")
+    } else "未记录到 Java 层崩溃；原生进程异常需要系统日志才能定位"
+    var crashSummary by remember { mutableStateOf(recentCrash()) }
 
     fun connect() {
         runCatching {
@@ -193,15 +200,34 @@ fun CheemsApp() {
         var previousUp = 0L
         var previousDown = 0L
         while (true) {
-            status = CheemsBridge.status()
-            running = CheemsBridge.running()
-            busy = CheemsBridge.connecting()
-            val currentUp = CheemsBridge.up()
-            val currentDown = CheemsBridge.down()
-            upSpeed = (currentUp - previousUp).coerceAtLeast(0L)
-            downSpeed = (currentDown - previousDown).coerceAtLeast(0L)
-            previousUp = currentUp
-            previousDown = currentDown
+            try {
+                // A failed native start must not crash the Compose polling coroutine.
+                val nextStatus = CheemsBridge.status()
+                val nextRunning = CheemsBridge.running()
+                val nextBusy = CheemsBridge.connecting()
+                val currentUp = CheemsBridge.up()
+                val currentDown = CheemsBridge.down()
+                status = nextStatus
+                running = nextRunning
+                busy = nextBusy
+                if (!nextBusy && message == "正在启动 Making 内核") message = ""
+                upSpeed = (currentUp - previousUp).coerceAtLeast(0L)
+                downSpeed = (currentDown - previousDown).coerceAtLeast(0L)
+                previousUp = currentUp
+                previousDown = currentDown
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                busy = false
+                running = false
+                status = "状态读取失败；请查看运行诊断"
+                diagnostics = "状态读取异常：" + e.javaClass.simpleName
+            } catch (e: LinkageError) {
+                busy = false
+                running = false
+                status = "内核接口异常；请查看运行诊断"
+                diagnostics = "内核接口异常：" + e.javaClass.simpleName
+            }
             delay(1000L)
         }
     }
@@ -362,7 +388,15 @@ fun CheemsApp() {
                         Spacer(Modifier.height(14.dp))
                         Spacer(Modifier.height(14.dp))
                         Text("运行诊断", color = Green, fontWeight = FontWeight.Bold)
-                        TextButton(onClick = { diagnostics = CheemsBridge.diagnostics() }) { Text("刷新记录") }
+                        TextButton(onClick = {
+                            diagnostics = runCatching { CheemsBridge.diagnostics() }
+                                .getOrElse { "读取运行记录失败：" + it.javaClass.simpleName }
+                            crashSummary = recentCrash()
+                        }) { Text("刷新记录") }
+                        Spacer(Modifier.height(8.dp))
+                        Text(crashSummary, color = Color(0xFFFFB4AB), fontSize = 12.sp)
+                        Text("上次 VPN 阶段：" + (startupPrefs.getString("last_stage", "无") ?: "无"),
+                            color = Color.LightGray, fontSize = 12.sp)
                         Text(if (diagnostics.isEmpty()) "暂无记录" else diagnostics,
                             color = Color.LightGray, fontSize = 12.sp)
                         Spacer(Modifier.height(10.dp))
