@@ -130,6 +130,17 @@ private fun speed(bytes: Long): String = when {
     else -> bytes.toString() + " B/s"
 }
 
+// JNI status and traffic queries can block while native QUIC/TUN teardown runs.
+// Keep all native status polling off the Compose UI thread.
+private data class BridgeSnapshot(
+    val status: String,
+    val running: Boolean,
+    val busy: Boolean,
+    val up: Long,
+    val down: Long,
+    val fullyStopped: Boolean
+)
+
 @Composable
 fun CheemsApp() {
     val context = LocalContext.current
@@ -207,31 +218,32 @@ fun CheemsApp() {
         var previousDown = 0L
         while (true) {
             try {
-                // A failed native start must not crash the Compose polling coroutine.
-                val nextStatus = CheemsBridge.status()
-                val nextRunning = CheemsBridge.running()
-                val nextBusy = CheemsBridge.connecting()
-                val currentUp = CheemsBridge.up()
-                val currentDown = CheemsBridge.down()
-                status = nextStatus
-                running = nextRunning
-                busy = nextBusy
-                if (!nextBusy && message == "正在启动 Making 内核") message = ""
-                if (disconnectRequested) {
-                    if (CheemsBridge.fullyStopped() && !nextRunning && !nextBusy) {
-                        disconnectRequested = false
-                        message = "VPN 已完全断开"
-                        connectionCheck = ""
-                    } else if (!disconnectWarned &&
-                        SystemClock.elapsedRealtime() - disconnectStartedAt > 15000L) {
-                        disconnectWarned = true
-                        message = "Android VPN 可能已关闭，但 Making 原生清理仍未完成；如 VPN 图标仍在，请在系统 VPN 设置中断开"
-                    }
+                // Core native calls may block; never run them on the Compose main thread.
+                val shouldCheckStopped = disconnectRequested
+                val snapshot = withContext(Dispatchers.IO) {
+                    BridgeSnapshot(
+                        CheemsBridge.status(),
+                        CheemsBridge.running(),
+                        CheemsBridge.connecting(),
+                        CheemsBridge.up(),
+                        CheemsBridge.down(),
+                        shouldCheckStopped && CheemsBridge.fullyStopped()
+                    )
                 }
-                upSpeed = (currentUp - previousUp).coerceAtLeast(0L)
-                downSpeed = (currentDown - previousDown).coerceAtLeast(0L)
-                previousUp = currentUp
-                previousDown = currentDown
+                status = snapshot.status
+                running = snapshot.running
+                busy = snapshot.busy
+                if (!snapshot.busy && message == "正在启动 Making 内核") message = ""
+                if (disconnectRequested && shouldCheckStopped &&
+                    snapshot.fullyStopped && !snapshot.running && !snapshot.busy) {
+                    disconnectRequested = false
+                    message = "VPN 已完全断开"
+                    connectionCheck = ""
+                }
+                upSpeed = (snapshot.up - previousUp).coerceAtLeast(0L)
+                downSpeed = (snapshot.down - previousDown).coerceAtLeast(0L)
+                previousUp = snapshot.up
+                previousDown = snapshot.down
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -246,6 +258,16 @@ fun CheemsApp() {
                 diagnostics = "内核接口异常：" + e.javaClass.simpleName
             }
             delay(1000L)
+        }
+    }
+    // The warning must still appear even if a native status call never returns.
+    LaunchedEffect(disconnectRequested, disconnectStartedAt) {
+        if (disconnectRequested) {
+            delay(15000L)
+            if (disconnectRequested && !disconnectWarned) {
+                disconnectWarned = true
+                message = "断联超过 15 秒，原生清理尚未确认完成；若 VPN 图标仍在，请从 Android 系统 VPN 设置断开"
+            }
         }
     }
     LaunchedEffect(autoRefresh, refreshMinutes, url, running, busy, importing) {
