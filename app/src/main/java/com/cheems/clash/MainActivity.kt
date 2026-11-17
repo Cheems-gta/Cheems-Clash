@@ -429,6 +429,26 @@ fun CheemsApp() {
                                 Spacer(Modifier.height(8.dp))
                                 Text(connectionCheck, color = Color.LightGray, fontSize = 12.sp)
                             }
+                            // A native teardown can remain blocked after the Android TUN
+                            // stop request. Never leave the user with no recovery action.
+                            if (disconnectRequested && disconnectWarned) {
+                                Spacer(Modifier.height(10.dp))
+                                OutlinedButton(
+                                    onClick = {
+                                        runCatching {
+                                            context.startActivity(
+                                                Intent(android.provider.Settings.ACTION_VPN_SETTINGS)
+                                            )
+                                        }.onFailure {
+                                            message = "无法打开系统 VPN 设置：" +
+                                                (it.message ?: it.javaClass.simpleName)
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("打开系统 VPN 设置以断开")
+                                }
+                            }
                         }
                         Spacer(Modifier.height(14.dp))
                         PanelCard {
