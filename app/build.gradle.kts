@@ -10,8 +10,8 @@ android {
         applicationId = "com.cheems.clash"
         minSdk = 28
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.3.0-cheems-core"
+        versionCode = 11
+        versionName = "0.3.1-making-lifecycle"
     }
     buildTypes { getByName("release") { isMinifyEnabled = false } }
     compileOptions {
