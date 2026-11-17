@@ -302,7 +302,7 @@ fun CheemsApp() {
                                     val intent = VpnService.prepare(context)
                                     if (intent == null) connect() else permission.launch(intent)
                                 }
-                            }, enabled = !importing && !CheemsBridge.stopping(),
+                            }, enabled = !CheemsBridge.stopping() && (!importing || CheemsBridge.canDisconnect() || running || busy),
                                 modifier = Modifier.fillMaxWidth().height(56.dp)) {
                                 Text(if (CheemsBridge.stopping()) "正在断开…"
                                     else if (busy) "断开正在连接的 VPN"
