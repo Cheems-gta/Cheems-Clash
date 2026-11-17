@@ -135,7 +135,7 @@ private fun speed(bytes: Long): String = when {
 
 private suspend fun probeLatency(context: Context, profile: String, index: Int): String = withContext(Dispatchers.IO) {
     try {
-        CheemsBridge.measureNodeLatency(context.applicationContext, profile, index).toString() + " ms · HY2 握手"
+        CheemsBridge.measureNodeLatency(context.applicationContext, profile, index).toString() + " ms · 协议连接"
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
@@ -335,7 +335,7 @@ fun CheemsApp() {
     // Keep at most three handshakes active and cancel safely on navigation.
     LaunchedEffect(tab, profile, busy, disconnectRequested) {
         if (tab != 1 || busy || disconnectRequested || testingAllNodes || autoLatencyCompleted) return@LaunchedEffect
-        val targets = nodes.filter { it.supported && it.protocol == "hysteria2" }
+        val targets = nodes.filter { it.supported && (it.protocol == "hysteria2" || it.protocol == "anytls") }
         if (targets.isEmpty()) return@LaunchedEffect
         autoLatencyCompleted = true
         testingAllNodes = true
@@ -470,13 +470,13 @@ fun CheemsApp() {
                     1 -> {
                         Text("已导入 " + nodes.size + " 个节点 · 连接前选择", color = Color.LightGray, fontSize = 13.sp)
                         Spacer(Modifier.height(8.dp))
-                        Text("进入此页自动测量 Hysteria2 握手延迟（ms），最多同时 3 个；也可手动重新测速。",
+                        Text("进入此页自动测量 HY2 / AnyTLS 节点延迟（ms），最多同时 3 个。",
                             color = Color.LightGray, fontSize = 12.sp)
                         Spacer(Modifier.height(12.dp))
                         Button(onClick = {
                             testingAllNodes = true
                             val snapshot = profile
-                            val targets = nodes.filter { it.supported && it.protocol == "hysteria2" }
+                            val targets = nodes.filter { it.supported && (it.protocol == "hysteria2" || it.protocol == "anytls") }
                             scope.launch {
                                 try {
                                     probeNodeBatch(context, snapshot, targets, nodeLatencies)
@@ -490,9 +490,9 @@ fun CheemsApp() {
                                 }
                             }
                         }, enabled = !busy && !disconnectRequested && !testingAllNodes &&
-                            nodes.any { it.supported && it.protocol == "hysteria2" },
+                            nodes.any { it.supported && (it.protocol == "hysteria2" || it.protocol == "anytls") },
                             modifier = Modifier.fillMaxWidth()) {
-                            Text(if (testingAllNodes) "正在测试 Hysteria2 节点…" else "一键测试全部节点延迟")
+                            Text(if (testingAllNodes) "正在测试节点延迟…" else "一键重新测试节点延迟")
                         }
                         Spacer(Modifier.height(12.dp))
                         nodes.forEach { node ->
@@ -505,9 +505,9 @@ fun CheemsApp() {
                                 if (!node.supported) Text(node.reason, color = Color(0xFFFFB4AB), fontSize = 12.sp)
                                 Spacer(Modifier.height(6.dp))
                                 Text(
-                                    if (node.protocol == "hysteria2" && node.supported)
+                                    if ((node.protocol == "hysteria2" || node.protocol == "anytls") && node.supported)
                                         "延迟：" + (nodeLatencies[node.index] ?: "未测速")
-                                    else "延迟：暂不支持此协议的握手测速",
+                                    else "延迟：尚未支持该协议",
                                     color = Green, fontSize = 13.sp
                                 )
                                 Spacer(Modifier.height(8.dp))
@@ -526,7 +526,7 @@ fun CheemsApp() {
                                             nodeLatencies[node.index] = probeLatency(context, snapshot, node.index)
                                         }
                                     }, enabled = !busy && !disconnectRequested && !testingAllNodes &&
-                                        node.supported && node.protocol == "hysteria2" &&
+                                        node.supported && (node.protocol == "hysteria2" || node.protocol == "anytls") &&
                                         nodeLatencies[node.index] != "测速中…") {
                                         Text("测速")
                                     }
