@@ -75,6 +75,11 @@ public final class CheemsBridge {
     return CoreService.tunnelEstablished && Hysteria2Native.isRunning();
   }
   public static boolean connecting() { return CoreService.connecting; }
+  public static boolean hasService() {
+    // The Android VPN service can outlive the native session on QUIC disconnect.
+    // Users must still be able to stop a stale service.
+    return CoreService.core != null || CoreService.connecting || CoreService.tunnelEstablished;
+  }
   public static String status() {
     if (CoreService.shuttingDown) return "正在断开 VPN…";
     if (CoreService.lastFailure != null && !CoreService.lastFailure.isEmpty())
