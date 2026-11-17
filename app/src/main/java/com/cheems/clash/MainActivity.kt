@@ -312,14 +312,25 @@ fun CheemsApp() {
                             Spacer(Modifier.height(20.dp))
                             Button(onClick = {
                                 if (running || busy || CheemsBridge.serviceAlive()) {
-                                    runCatching { CheemsBridge.disconnect(context) }
-                                        .onSuccess {
-                                            disconnectRequested = true
-                                            disconnectWarned = false
-                                            disconnectStartedAt = SystemClock.elapsedRealtime()
+                                    // Always acknowledge the tap before any binder/service operation.
+                                    disconnectRequested = true
+                                    disconnectWarned = false
+                                    disconnectStartedAt = SystemClock.elapsedRealtime()
+                                    status = "正在断开 VPN…"
+                                    message = "正在发送断联指令…"
+                                    scope.launch {
+                                        try {
+                                            withContext(Dispatchers.IO) {
+                                                CheemsBridge.disconnect(context)
+                                            }
                                             message = "已发送断联指令，正在停止 Making 内核及 Android VPN"
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            disconnectRequested = false
+                                            message = "断联请求失败：" + (e.message ?: e.javaClass.simpleName)
                                         }
-                                        .onFailure { message = "断联请求失败：" + (it.message ?: it.javaClass.simpleName) }
+                                    }
                                 } else if (nodes.isEmpty()) {
                                     tab = 2; message = "请先导入配置"
                                 } else {
