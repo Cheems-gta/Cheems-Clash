@@ -88,14 +88,14 @@ public final class CheemsBridge {
     return fallback;
   }
 
-  /** Measures a real HY2 QUIC handshake, not misleading TCP port latency. */
+  /** Measures a real protocol handshake/stream, not misleading TCP port latency. */
   public static long measureNodeLatency(Context context, String profile, int index) throws Exception {
     if (CoreService.stopping || CoreService.nativeShutdownInProgress)
       throw new IllegalStateException("VPN 正在断开，请稍后测速");
     List<Node> nodes = Subscription.parse(profile);
     if (index < 0 || index >= nodes.size()) throw new IllegalArgumentException("节点下标无效");
     Node node = nodes.get(index);
-    if (!node.supported() || !"hysteria2".equals(node.type))
+    if (!node.supported() || (!"hysteria2".equals(node.type) && !"anytls".equals(node.type)))
       throw new UnsupportedOperationException("此协议尚未提供独立握手测速");
     Network physical = physicalNetwork(context);
     CoreService service = CoreService.activeInstance;
@@ -127,12 +127,23 @@ public final class CheemsBridge {
           throw new UnsupportedOperationException(method.getName());
         });
     try {
-      Object result = Class.forName("go.mobilebridge.Mobilebridge")
-          .getMethod("probeHysteria2WithNetwork", String.class, long.class,
-              String.class, String.class, boolean.class, String.class,
-              String.class, networkType)
-          .invoke(null, node.host, (long)node.port, node.sni, node.password,
-              true, "", "", network);
+      Class<?> bridge = Class.forName("go.mobilebridge.Mobilebridge");
+      Object result;
+      if ("anytls".equals(node.type)) {
+        result = bridge.getMethod("probeAnyTLSWithNetwork",
+                String.class, long.class, String.class, String.class,
+                String.class, String.class, boolean.class, String.class,
+                String.class, networkType)
+            .invoke(null, node.host, (long)node.port, node.sni, node.password,
+                node.anyTLSFingerprint(), node.anyTLSALPN(),
+                true, "", "", network);
+      } else {
+        result = bridge.getMethod("probeHysteria2WithNetwork",
+                String.class, long.class, String.class, String.class,
+                boolean.class, String.class, String.class, networkType)
+            .invoke(null, node.host, (long)node.port, node.sni, node.password,
+                true, "", "", network);
+      }
       return Math.max(1L, ((Number)result).longValue());
     } catch (java.lang.reflect.InvocationTargetException e) {
       Throwable cause = e.getCause();
