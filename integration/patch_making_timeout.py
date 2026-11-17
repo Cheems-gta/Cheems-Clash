@@ -443,3 +443,116 @@ if native_source.count(old) != 1:
     raise SystemExit("Go StopTunnel bounded shutdown block mismatch")
 native_path.write_text(native_source.replace(old, new, 1), encoding="utf-8")
 print("Making stopService + bounded native teardown + HY2 RTT probe enabled")
+
+
+# Immediate on-demand VPN descriptor release.
+# Android's system may hold a binding to VpnService, so stopService() alone
+# need not invoke onDestroy() promptly. Stop requests must close the live
+# ParcelFileDescriptor directly, then retire the Go session asynchronously.
+old_stop = (
+    '    if (intent != null && ACTION_STOP_VPN.equals(intent.getAction())) {\n'
+    '      if (stopRequested.compareAndSet(false, true)) {\n'
+    '        stopping = true;\n'
+    '        connecting = false;\n'
+    '        lastFailure = null;\n'
+    '        log("收到断联请求：先关闭 Android VPN，再后台清理 Making 内核");\n'
+    '        // Never await Hysteria2Native.stop() here: StopTunnel can block.\n'
+    '        // Android immediately runs onDestroy() and releases the VPN FD.\n'
+    '        stopSelf();\n'
+    '      }\n'
+    '      return START_NOT_STICKY;\n'
+    '    }\n'
+)
+new_stop = (
+    '    if (intent != null && ACTION_STOP_VPN.equals(intent.getAction())) {\n'
+    '      requestImmediateDisconnect();\n'
+    '      return START_NOT_STICKY;\n'
+    '    }\n'
+)
+replace_once(old_stop, new_stop)
+
+start_marker = '  @Override\n  public void onDestroy() {\n'
+end_marker = '  @Override\n  public void onRevoke() {\n'
+if source.count(start_marker) != 1 or source.count(end_marker) != 1:
+    raise SystemExit("Cannot safely replace onDestroy after Making patches")
+begin, end = source.index(start_marker), source.index(end_marker)
+shutdown_code = '''  /**
+   * Directly tears down the live VPN interface. A bound VpnService may survive
+   * stopService() for some time, so onDestroy() cannot be the only teardown path.
+   */
+  public void requestImmediateDisconnect() {
+    if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+      releaseVpnNow();
+      stopSelf();
+    } else {
+      new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+        releaseVpnNow();
+        stopSelf();
+      });
+    }
+  }
+
+  private void releaseVpnNow() {
+    // Idempotent across notification button, app button, onDestroy, and revoke.
+    if (!stopRequested.compareAndSet(false, true)) return;
+    destroyed = true;
+    stopping = true;
+    connecting = false;
+    nativeShutdownInProgress = true;
+    Thread watcher = connectionMonitor;
+    if (watcher != null) watcher.interrupt();
+
+    // Release OS VPN descriptor before any Go, proxy, or database operation.
+    ParcelFileDescriptor descriptor = vpnInterface;
+    vpnInterface = null;
+    if (descriptor != null) {
+      try { descriptor.close(); }
+      catch (IOException e) { log("Android VPN 接口关闭异常"); }
+    }
+    if (core == ownedCore) {
+      tunnelEstablished = false;
+      forwardingVerified = false;
+      core = null;
+    }
+    if (ownedHttpPassword != null && ownedHttpPassword.equals(localHttpPassword))
+      localHttpPassword = null;
+
+    try { stopForeground(STOP_FOREGROUND_REMOVE); }
+    catch (RuntimeException ignored) {}
+    serviceAlive = false;
+    if (activeInstance == this) activeInstance = null;
+    final ProxyCore retiringCore = ownedCore;
+    Thread cleanup = new Thread(() -> {
+      try {
+        if (Hysteria2Native.isPackaged()) Hysteria2Native.stop();
+        log("Making 原生会话已关闭");
+      } catch (Exception | LinkageError e) {
+        log("原生内核清理失败：" + e.getClass().getSimpleName());
+      } finally {
+        try {
+          if (retiringCore != null) retiringCore.stop();
+        } catch (RuntimeException e) {
+          log("本地代理清理失败：" + e.getClass().getSimpleName());
+        } finally {
+          nativeShutdownInProgress = false;
+          stopping = false;
+          try { finishStage("VPN 已断开"); }
+          catch (RuntimeException ignored) {}
+          log("VPN 清理流程结束");
+        }
+      }
+    }, "making-release-after-fd-close");
+    cleanup.setDaemon(true);
+    cleanup.start();
+  }
+
+  @Override
+  public void onDestroy() {
+    releaseVpnNow();
+    super.onDestroy();
+  }
+
+'''
+source = source[:begin] + shutdown_code + source[end:]
+path.write_text(source, encoding="utf-8")
+print("Making: direct live TUN closure independent of bound service onDestroy")
