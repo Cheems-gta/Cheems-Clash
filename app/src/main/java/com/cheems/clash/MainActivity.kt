@@ -147,6 +147,7 @@ fun CheemsApp() {
     var running by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var stopping by remember { mutableStateOf(false) }
+    var serviceActive by remember { mutableStateOf(false) }
     var stopRequested by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
     var diagnostics by remember { mutableStateOf("") }
@@ -208,12 +209,14 @@ fun CheemsApp() {
                 val nextRunning = CheemsBridge.running()
                 val nextBusy = CheemsBridge.connecting()
                 val nextStopping = CheemsBridge.stopping()
+                val nextServiceActive = CheemsBridge.hasService()
                 val currentUp = CheemsBridge.up()
                 val currentDown = CheemsBridge.down()
                 status = nextStatus
                 running = nextRunning
                 busy = nextBusy
                 stopping = nextStopping
+                serviceActive = nextServiceActive
                 if (stopRequested && !nextStopping && !nextRunning && !nextBusy) stopRequested = false
                 if (!nextBusy && message == "正在启动 Making 内核") message = ""
                 upSpeed = (currentUp - previousUp).coerceAtLeast(0L)
@@ -279,7 +282,7 @@ fun CheemsApp() {
                             Button(onClick = {
                                 if (stopping || stopRequested) {
                                     message = "正在清理 VPN，请稍后"
-                                } else if (running || busy) {
+                                } else if (running || busy || serviceActive) {
                                     stopRequested = true
                                     message = "已收到断开请求，正在关闭 VPN…"
                                     scope.launch {
@@ -305,7 +308,7 @@ fun CheemsApp() {
                                     if (intent == null) connect() else permission.launch(intent)
                                 }
                             }, enabled = !importing && !stopping && !stopRequested, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-                                Text(if (stopping || stopRequested) "正在断开 VPN…" else if (busy) "断开正在连接的 VPN" else if (running) "断开连接" else "连接")
+                                Text(if (stopping || stopRequested) "正在断开 VPN…" else if (busy) "断开正在连接的 VPN" else if (running || serviceActive) "断开连接" else "连接")
                             }
                         }
                         Spacer(Modifier.height(14.dp))
