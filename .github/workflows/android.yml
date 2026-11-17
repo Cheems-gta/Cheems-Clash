@@ -1,7 +1,7 @@
 name: Build Cheems Clash with independent Cheems Core
 on:
   push:
-    branches: [core-integration, main, doreena-stable-icon-only, 'fix/making-timeout-crash', 'fix/making-disconnect-responsive']
+    branches: [core-integration, main, doreena-stable-icon-only, 'fix/making-timeout-crash', 'fix/making-disconnect-responsive', 'fix/cheems-disconnect-off-main-20261117']
   workflow_dispatch:
 
 permissions:
