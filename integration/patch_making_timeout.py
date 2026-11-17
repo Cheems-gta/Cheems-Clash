@@ -79,3 +79,111 @@ replace_once(
 
 path.write_text(source, encoding="utf-8")
 print("Making Core timeout/teardown guard applied")
+
+
+# Disconnect handling: run native Stop off Android main thread; let stopSelf()
+# execute only after native shutdown. Neither the UI nor onDestroy may block on
+# an otherwise healthy native tunnel teardown.
+replace_once(
+    '  private static final String ACTION_STOP_VPN = "win.cheems.core.STOP_VPN";\n',
+    '  public static final String ACTION_STOP_VPN = "win.cheems.core.STOP_VPN";\n',
+)
+replace_once(
+    '  private volatile boolean nativeStartInFlight;\n',
+    '  private volatile boolean nativeStartInFlight;\n'
+    '  static volatile boolean serviceAlive;\n'
+    '  static volatile boolean stopping;\n'
+    '  private volatile boolean nativeStopped;\n'
+    '  private final AtomicBoolean stopRequested = new AtomicBoolean();\n',
+)
+replace_once(
+    '    destroyed = false;\n    tunnelEstablished = false;\n',
+    '    destroyed = false;\n    serviceAlive = true;\n    stopping = false;\n'
+    '    nativeStopped = false;\n    tunnelEstablished = false;\n',
+)
+replace_once(
+    '    if (intent != null && ACTION_STOP_VPN.equals(intent.getAction())) {\n'
+    '      log("用户通过通知栏请求停止 VPN");\n'
+    '      try { stopForeground(STOP_FOREGROUND_REMOVE); } catch (RuntimeException ignored) {}\n'
+    '      stopSelf();\n'
+    '      return START_NOT_STICKY;\n'
+    '    }\n',
+    '    if (intent != null && ACTION_STOP_VPN.equals(intent.getAction())) {\n'
+    '      if (stopRequested.compareAndSet(false, true)) {\n'
+    '        stopping = true;\n'
+    '        connecting = false;\n'
+    '        lastFailure = null;\n'
+    '        log("收到断联请求，后台关闭 Making 内核和 Android VPN");\n'
+    '        Thread shutdown = new Thread(() -> {\n'
+    '          try {\n'
+    '            if (Hysteria2Native.isPackaged()) Hysteria2Native.stop();\n'
+    '            log("Making 原生停止指令已执行");\n'
+    '          } catch (Exception | LinkageError e) {\n'
+    '            log("Making 断联异常：" + e.getClass().getSimpleName());\n'
+    '          } finally {\n'
+    '            nativeStopped = true;\n'
+    '            stopSelf();\n'
+    '          }\n'
+    '        }, "making-disconnect");\n'
+    '        shutdown.setDaemon(true);\n'
+    '        shutdown.start();\n'
+    '      }\n'
+    '      return START_NOT_STICKY;\n'
+    '    }\n'
+    '    if (stopping) return START_NOT_STICKY;\n',
+)
+replace_once(
+    '    if (destroyed) return;\n    startupStage = stage;\n',
+    '    if (destroyed || stopping) return;\n    startupStage = stage;\n',
+)
+replace_once(
+    '                if (destroyed) return;\n                boolean nativeNode =',
+    '                if (destroyed || stopping) return;\n                boolean nativeNode =',
+)
+replace_once(
+    '                if (destroyed) {\n'
+    '                  if (nativeNode) Hysteria2Native.stop();\n'
+    '                  return;\n'
+    '                }\n',
+    '                if (destroyed || stopping) {\n'
+    '                  if (nativeNode && !stopping) Hysteria2Native.stop();\n'
+    '                  return;\n'
+    '                }\n',
+)
+# Ensure a canceled native handshake cannot proceed to local proxy or TUN.
+source = source.replace(
+    'if (destroyed || core != ownedCore) return;',
+    'if (destroyed || stopping || core != ownedCore) return;'
+)
+replace_once(
+    '                updateConnecting(false);\n'
+    '                finishStage(nativeNode ? "VPN 接口与节点转发均已启动" : "本地代理运行中");\n',
+    '                if (stopping) return;\n'
+    '                updateConnecting(false);\n'
+    '                finishStage(nativeNode ? "VPN 接口与节点转发均已启动" : "本地代理运行中");\n',
+)
+replace_once(
+    '              } catch (Exception | LinkageError e) {\n'
+    '                updateConnecting(false);\n',
+    '              } catch (Exception | LinkageError e) {\n'
+    '                if (stopping) {\n'
+    '                  log("连接已由用户取消");\n'
+    '                  return;\n'
+    '                }\n'
+    '                updateConnecting(false);\n',
+)
+replace_once(
+    '    boolean nativeCleanupNeeded = nativeStartInFlight || tunnelEstablished\n'
+    '        || Hysteria2Native.isRunning();\n',
+    '    boolean nativeCleanupNeeded = !nativeStopped && !stopping &&\n'
+    '        (nativeStartInFlight || tunnelEstablished || Hysteria2Native.isRunning());\n',
+)
+replace_once(
+    '    super.onDestroy();\n  }\n\n  @Override\n  public void onRevoke()',
+    '    serviceAlive = false;\n'
+    '    stopping = false;\n'
+    '    super.onDestroy();\n'
+    '  }\n\n  @Override\n  public void onRevoke()',
+)
+path.write_text(source, encoding="utf-8")
+print("Making connection cancellation and async disconnect patch applied")
