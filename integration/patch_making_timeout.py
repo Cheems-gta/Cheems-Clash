@@ -187,3 +187,15 @@ replace_once(
 )
 path.write_text(source, encoding="utf-8")
 print("Making connection cancellation and async disconnect patch applied")
+
+replace_once(
+    '      if (destroyed || core != ownedCore)\n'
+    '        throw new IOException("VPN 启动期间服务已停止");\n',
+    '      if (destroyed || stopping || core != ownedCore)\n'
+    '        throw new IOException("VPN 启动期间服务已停止");\n',
+)
+replace_once(
+    '          while (!destroyed && core == ownedCore) {\n',
+    '          while (!destroyed && !stopping && core == ownedCore) {\n',
+)
+path.write_text(source, encoding="utf-8")
