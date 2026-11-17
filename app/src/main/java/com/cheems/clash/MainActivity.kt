@@ -218,14 +218,14 @@ fun CheemsApp() {
                 busy = nextBusy
                 if (!nextBusy && message == "正在启动 Making 内核") message = ""
                 if (disconnectRequested) {
-                    if (!CheemsBridge.serviceAlive() && !nextRunning && !nextBusy) {
+                    if (CheemsBridge.fullyStopped() && !nextRunning && !nextBusy) {
                         disconnectRequested = false
                         message = "VPN 已完全断开"
                         connectionCheck = ""
                     } else if (!disconnectWarned &&
                         SystemClock.elapsedRealtime() - disconnectStartedAt > 15000L) {
                         disconnectWarned = true
-                        message = "断联超过 15 秒，仍未确认完成；可在 Android 系统 VPN 设置中停止"
+                        message = "Android VPN 可能已关闭，但 Making 原生清理仍未完成；如 VPN 图标仍在，请在系统 VPN 设置中断开"
                     }
                 }
                 upSpeed = (currentUp - previousUp).coerceAtLeast(0L)
@@ -286,7 +286,7 @@ fun CheemsApp() {
                             Spacer(Modifier.height(14.dp))
                             Text(status, color = Green, fontSize = 23.sp, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(8.dp))
-                            Text("Making · 独立原生内核（不含 Mihomo）", color = Color.LightGray, fontSize = 12.sp)
+                            Text("Making · 独立原生内核", color = Color.LightGray, fontSize = 12.sp)
                             Spacer(Modifier.height(20.dp))
                             Button(onClick = {
                                 if (running || busy || CheemsBridge.serviceAlive()) {
@@ -304,7 +304,7 @@ fun CheemsApp() {
                                     val intent = VpnService.prepare(context)
                                     if (intent == null) connect() else permission.launch(intent)
                                 }
-                            }, enabled = !importing && !disconnectRequested,
+                            }, enabled = !disconnectRequested && (!importing || running || busy || CheemsBridge.serviceAlive()),
                                 modifier = Modifier.fillMaxWidth().height(56.dp)) {
                                 Text(if (disconnectRequested || CheemsBridge.stopping()) "正在断开 VPN…"
                                     else if (running || busy || CheemsBridge.serviceAlive()) "断开连接" else "连接")
@@ -452,7 +452,7 @@ fun CheemsApp() {
                         Text(if (diagnostics.isEmpty()) "暂无记录" else diagnostics,
                             color = Color.LightGray, fontSize = 12.sp)
                         Spacer(Modifier.height(10.dp))
-                        Text("此集成版不含 Mihomo 的策略组热切换或规则引擎；新内核仅提供实际实现的协议功能。",
+                        Text("Making 当前仅提供已经实现的协议功能。",
                             color = Color.LightGray, fontSize = 12.sp)
                     }
                 }
