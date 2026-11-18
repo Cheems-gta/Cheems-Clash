@@ -50,6 +50,15 @@ jobs:
           go build -trimpath -ldflags="-s -w" -o "$env:GITHUB_WORKSPACE/doreena-making.exe" ./cmd/doreena-making
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path "$env:GITHUB_WORKSPACE/doreena-making.exe")) { throw "Missing EXE" }
+      - name: Record build provenance and checksum
+        shell: pwsh
+        run: |
+          $sourceCommit = (git -C making-src rev-parse HEAD).Trim()
+          "Making source branch: making-latest" | Set-Content -Encoding utf8 BUILD-INFO.txt
+          "Making source commit: $sourceCommit" | Add-Content -Encoding utf8 BUILD-INFO.txt
+          "Doreena branch commit: $env:GITHUB_SHA" | Add-Content -Encoding utf8 BUILD-INFO.txt
+          $hash = (Get-FileHash -Algorithm SHA256 ./doreena-making.exe).Hash.ToLower()
+          "$hash  doreena-making.exe" | Set-Content -Encoding utf8 SHA256SUMS.txt
       - name: Smoke-test executable
         shell: pwsh
         run: |
@@ -58,5 +67,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Making-Windows-x64-core
-          path: doreena-making.exe
+          path: |\n            doreena-making.exe\n            BUILD-INFO.txt\n            SHA256SUMS.txt
           if-no-files-found: error
