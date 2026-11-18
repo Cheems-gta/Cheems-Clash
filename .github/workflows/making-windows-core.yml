@@ -30,14 +30,11 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force making-src/native/quic/cmd/doreena-making | Out-Null
           Copy-Item windows-kernel/main.go making-src/native/quic/cmd/doreena-making/main.go
-      - name: Verify native code
+      - name: Download Go modules
         shell: pwsh
         working-directory: making-src/native/quic
         run: |
           go mod download
-          go test ./... -count=1 -timeout=120s
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go vet ./...
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build Windows amd64 binary
         shell: pwsh
@@ -67,5 +64,16 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Making-Windows-x64-core
-          path: |\n            doreena-making.exe\n            BUILD-INFO.txt\n            SHA256SUMS.txt
+          path: |
+            doreena-making.exe
+            BUILD-INFO.txt
+            SHA256SUMS.txt
           if-no-files-found: error
+      - name: Verify native code after packaging
+        shell: pwsh
+        working-directory: making-src/native/quic
+        run: |
+          go test ./... -count=1 -timeout=120s
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
