@@ -1,67 +1,86 @@
 name: Build Making Windows x64 core
 on:
   push:
-    branches: [doreena-pc-windows]
+    branches:
+      - doreena-pc-windows
     paths:
       - 'windows-kernel/**'
       - '.github/workflows/making-windows-core.yml'
   workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
   windows-core:
     runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
     steps:
-      - name: Checkout Doreena bridge
+      - name: Checkout Doreena Windows bridge
         uses: actions/checkout@v4
-      - name: Checkout latest Making source
+
+      - name: Checkout Making latest
         uses: actions/checkout@v4
         with:
           repository: Cheems-gta/Cheems-Core
           ref: making-latest
           path: making-src
           persist-credentials: false
-      - uses: actions/setup-go@v5
+
+      - name: Setup Go matching Making
+        uses: actions/setup-go@v5
         with:
           go-version-file: making-src/native/quic/go.mod
           cache: false
-      - name: Install Windows bridge into Making module
-        shell: pwsh
+
+      - name: Prepare native Windows entrypoint
         run: |
           New-Item -ItemType Directory -Force making-src/native/quic/cmd/doreena-making | Out-Null
           Copy-Item windows-kernel/main.go making-src/native/quic/cmd/doreena-making/main.go
-      - name: Download Go modules
-        shell: pwsh
+          go version
+          git -C making-src rev-parse HEAD
+
+      - name: Download dependencies
+        id: deps
+        continue-on-error: true
         working-directory: making-src/native/quic
         run: |
-          go mod download
+          go mod download *>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE/go-dependencies.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Build Windows amd64 binary
-        shell: pwsh
+
+      - name: Build Making Windows x64
+        id: build
+        if: steps.deps.outcome == 'success'
+        continue-on-error: true
         working-directory: making-src/native/quic
         env:
           GOOS: windows
           GOARCH: amd64
           CGO_ENABLED: '0'
         run: |
-          go build -trimpath -ldflags="-s -w" -o "$env:GITHUB_WORKSPACE/doreena-making.exe" ./cmd/doreena-making
+          go build -trimpath -ldflags="-s -w" -o "$env:GITHUB_WORKSPACE/doreena-making.exe" ./cmd/doreena-making *>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE/go-build.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (-not (Test-Path "$env:GITHUB_WORKSPACE/doreena-making.exe")) { throw "Missing EXE" }
-      - name: Record build provenance and checksum
-        shell: pwsh
-        run: |
-          $sourceCommit = (git -C making-src rev-parse HEAD).Trim()
-          "Making source branch: making-latest" | Set-Content -Encoding utf8 BUILD-INFO.txt
-          "Making source commit: $sourceCommit" | Add-Content -Encoding utf8 BUILD-INFO.txt
-          "Doreena branch commit: $env:GITHUB_SHA" | Add-Content -Encoding utf8 BUILD-INFO.txt
-          $hash = (Get-FileHash -Algorithm SHA256 ./doreena-making.exe).Hash.ToLower()
-          "$hash  doreena-making.exe" | Set-Content -Encoding utf8 SHA256SUMS.txt
-      - name: Smoke-test executable
-        shell: pwsh
+          if (-not (Test-Path "$env:GITHUB_WORKSPACE/doreena-making.exe")) { throw "Missing doreena-making.exe" }
+
+      - name: Smoke test and provenance
+        id: smoke
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
         run: |
           & ./doreena-making.exe --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - uses: actions/upload-artifact@v4
+          $sourceCommit = (git -C making-src rev-parse HEAD).Trim()
+          "Making source: making-latest@$sourceCommit" | Set-Content -Encoding utf8 BUILD-INFO.txt
+          "Doreena bridge: $env:GITHUB_SHA" | Add-Content -Encoding utf8 BUILD-INFO.txt
+          $hash = (Get-FileHash -Algorithm SHA256 ./doreena-making.exe).Hash.ToLower()
+          "$hash  doreena-making.exe" | Set-Content -Encoding utf8 SHA256SUMS.txt
+
+      - name: Publish Windows binary if smoke test passed
+        if: steps.smoke.outcome == 'success'
+        uses: actions/upload-artifact@v4
         with:
           name: Making-Windows-x64-core
           path: |
@@ -69,11 +88,34 @@ jobs:
             BUILD-INFO.txt
             SHA256SUMS.txt
           if-no-files-found: error
-      - name: Verify native code after packaging
-        shell: pwsh
+
+      - name: Run Go unit tests and vet
+        id: tests
+        if: steps.smoke.outcome == 'success'
+        continue-on-error: true
         working-directory: making-src/native/quic
         run: |
-          go test ./... -count=1 -timeout=120s
+          go test ./... -count=1 -timeout=120s *>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE/go-tests.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go vet ./...
+          go vet ./... *>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE/go-vet.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload build diagnostics, even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Making-Windows-diagnostics
+          path: |
+            go-dependencies.log
+            go-build.log
+            go-tests.log
+            go-vet.log
+          if-no-files-found: warn
+
+      - name: Fail check on genuine build or test failure
+        if: always()
+        run: |
+          if ('${{ steps.deps.outcome }}' -ne 'success') { throw 'Go module download failed; see diagnostics artifact' }
+          if ('${{ steps.build.outcome }}' -ne 'success') { throw 'Go Windows native build failed; see diagnostics artifact' }
+          if ('${{ steps.smoke.outcome }}' -ne 'success') { throw 'Built EXE smoke test failed' }
+          if ('${{ steps.tests.outcome }}' -ne 'success') { throw 'Go unit tests or vet failed; see diagnostics artifact' }
