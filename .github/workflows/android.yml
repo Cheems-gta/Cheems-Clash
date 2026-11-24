@@ -1,7 +1,7 @@
 name: Build Cheems Clash with independent Cheems Core
 on:
   push:
-    branches: [core-integration, main, doreena-stable-icon-only, 'fix/making-timeout-crash', 'fix/making-connect-disconnect', 'fix/making-disconnect-release-tun']
+    branches: [core-integration, main, doreena-stable-icon-only, 'fix/making-timeout-crash', 'fix/making-connect-disconnect', 'fix/making-disconnect-release-tun', 'fix/anytls-preflight-state']
   workflow_dispatch:
 
 permissions:
@@ -56,6 +56,7 @@ jobs:
           git -C core-upstream checkout --detach 148b1034255a4a097695baf6c173c1f545a51ae1
           test "$(git -C core-upstream rev-parse HEAD)" = "148b1034255a4a097695baf6c173c1f545a51ae1"
           mkdir -p app/src/main/java
+          git -C core-upstream apply ../integration/preflight.patch
           cp -a core-upstream/app/src/main/java/win app/src/main/java/
           rm -f app/src/main/java/win/cheems/core/MainActivity.java
           python3 integration/patch_making_timeout.py

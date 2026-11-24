@@ -173,9 +173,9 @@ public final class CheemsBridge {
   }
   public static boolean connecting() { return CoreService.connecting || stopping(); }
   public static String status() {
-    if (stopping()) return CoreService.serviceAlive ? "正在断开 VPN…" : "Android VPN 已关闭，正在清理 Making 内核…";
     if (CoreService.lastFailure != null && !CoreService.lastFailure.isEmpty())
       return "连接失败：" + CoreService.lastFailure;
+    if (stopping()) return CoreService.serviceAlive ? "正在断开 VPN…" : "Android VPN 已关闭，正在清理 Making 内核…";
     if (CoreService.connecting) return "正在连接…";
     if (running()) return "已连接";
     return "尚未连接";
