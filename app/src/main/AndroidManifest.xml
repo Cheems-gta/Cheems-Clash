@@ -5,6 +5,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <queries>
+        <package android:name="com.tencent.mm"/>
+        <package android:name="com.tencent.mobileqq"/>
+        <package android:name="tv.danmaku.bili"/>
+    </queries>
     <application android:name="win.cheems.core.CheemsApplication"
         android:icon="@mipmap/cheems_app_icon" android:roundIcon="@mipmap/cheems_app_icon"
         android:label="Doreena" android:allowBackup="false"

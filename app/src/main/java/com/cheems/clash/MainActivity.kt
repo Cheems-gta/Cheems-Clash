@@ -187,6 +187,7 @@ fun CheemsApp() {
     val nodes = remember(profile) { runCatching { parseNodes(profile) }.getOrDefault(emptyList()) }
     var selected by remember { mutableIntStateOf(prefs.getInt("core_selected_index", 0)) }
     var url by remember { mutableStateOf(prefs.getString("url", "") ?: "") }
+    var domesticBypass by remember { mutableStateOf(prefs.getBoolean("domestic_app_bypass", true)) }
     var autoRefresh by remember { mutableStateOf(prefs.getBoolean("auto_refresh", true)) }
     var refreshMinutes by remember { mutableStateOf(prefs.getInt("refresh_minutes", 60).toString()) }
     var usage by remember { mutableStateOf(prefs.getString("usage", null)) }
@@ -369,6 +370,16 @@ fun CheemsApp() {
                             Text(status, color = Green, fontSize = 23.sp, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(8.dp))
                             Text("Making · 独立原生内核", color = Color.LightGray, fontSize = 12.sp)
+                            Spacer(Modifier.height(12.dp))
+                            Text("应用分流模式", color = Color.White, fontWeight = FontWeight.Bold)
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text(if (domesticBypass) "微信、QQ、哔哩哔哩直连" else "全局代理", modifier = Modifier.weight(1f), color = Color.LightGray)
+                                Switch(checked = domesticBypass, enabled = !running && !busy && !disconnectRequested && !CheemsBridge.serviceAlive(), onCheckedChange = {
+                                    domesticBypass = it
+                                    prefs.edit().putBoolean("domestic_app_bypass", it).apply()
+                                })
+                            }
+                            Text("开启时，所列应用的全部流量（含 DNS）不经 VPN。断开后可切换；不是按域名分流。", color = Color.LightGray, fontSize = 12.sp)
                             Spacer(Modifier.height(20.dp))
                             Button(onClick = {
                                 if (running || busy || CheemsBridge.serviceAlive()) {

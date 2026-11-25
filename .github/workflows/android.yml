@@ -1,7 +1,7 @@
 name: Build Cheems Clash with independent Cheems Core
 on:
   push:
-    branches: [core-integration, main, doreena-stable-icon-only, 'fix/making-timeout-crash', 'fix/making-connect-disconnect', 'fix/making-disconnect-release-tun', 'fix/anytls-preflight-state']
+    branches: [core-integration, main, doreena-stable-icon-only, 'fix/making-timeout-crash', 'fix/making-connect-disconnect', 'fix/making-disconnect-release-tun', 'fix/anytls-preflight-state', 'fix/domestic-app-routing']
   workflow_dispatch:
 
 permissions:
@@ -60,6 +60,7 @@ jobs:
           cp -a core-upstream/app/src/main/java/win app/src/main/java/
           rm -f app/src/main/java/win/cheems/core/MainActivity.java
           python3 integration/patch_making_timeout.py
+          python3 integration/patch_domestic_routing.py
           sed -i 's/new Intent(this, MainActivity.class)/new Intent(this, com.cheems.clash.MainActivity.class)/g' app/src/main/java/win/cheems/core/CoreService.java
           # Cosmetic-only notification branding; leave native VPN implementation untouched.
           sed -i 's/android.R.drawable.stat_sys_upload_done/com.cheems.clash.R.drawable.ic_notification/g' app/src/main/java/win/cheems/core/CoreService.java
