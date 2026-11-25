@@ -5,6 +5,8 @@ import android.app.Activity
 import android.content.Intent
 import android.content.Context
 import android.net.VpnService
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
@@ -127,6 +129,47 @@ private fun downloadProfile(address: String): Download {
     error("订阅重定向次数过多")
 }
 
+// The client itself is excluded from its VPN, so this is a physical-network
+// sample, not a measurement of another application's CDN or rendering time.
+private fun sampleDirectNetwork(context: Context): String {
+    val cm = context.getSystemService(ConnectivityManager::class.java)
+        ?: error("无法读取网络状态")
+    val network = cm.activeNetwork ?: error("没有活动网络")
+    val caps = cm.getNetworkCapabilities(network) ?: error("网络状态不可用")
+    check(!caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) { "当前网络不是物理直连" }
+    val kind = when {
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "移动数据"
+        else -> "其他网络"
+    }
+    val results = listOf("www.baidu.com", "www.bilibili.com").map { host ->
+        try {
+            val start = SystemClock.elapsedRealtime()
+            network.getAllByName(host)
+            val dns = SystemClock.elapsedRealtime() - start
+            val connection = network.openConnection(URL("https://" + host + "/")) as HttpURLConnection
+            try {
+                connection.requestMethod = "HEAD"
+                connection.instanceFollowRedirects = false
+                connection.useCaches = false
+                connection.connectTimeout = 5000
+                connection.readTimeout = 5000
+                connection.setRequestProperty("Connection", "close")
+                val begin = SystemClock.elapsedRealtime()
+                val status = connection.responseCode
+                val elapsed = SystemClock.elapsedRealtime() - begin
+                "$host：DNS ${dns} ms · HTTPS 首部 ${elapsed} ms · HTTP $status"
+            } finally {
+                connection.disconnect()
+            }
+        } catch (e: Exception) {
+            "$host：检测失败 (${e.javaClass.simpleName})"
+        }
+    }
+    check(cm.activeNetwork == network) { "检测期间底层网络切换，请重新检测" }
+    return kind + "\n" + results.joinToString("\n")
+}
+
 private fun speed(bytes: Long): String = when {
     bytes >= 1048576 -> String.format(Locale.US, "%.1f MB/s", bytes / 1048576.0)
     bytes >= 1024 -> String.format(Locale.US, "%.1f KB/s", bytes / 1024.0)
@@ -153,7 +196,7 @@ private suspend fun probeNodeBatch(
     nodes: List<NodeRow>,
     latencies: MutableMap<Int, String>
 ) {
-    val limit = Semaphore(3)
+    val limit = Semaphore(2)
     coroutineScope {
         nodes.map { node ->
             launch {
@@ -201,7 +244,10 @@ fun CheemsApp() {
     var downSpeed by remember { mutableLongStateOf(0L) }
     val nodeLatencies = remember(profile) { mutableStateMapOf<Int, String>() }
     var testingAllNodes by remember { mutableStateOf(false) }
-    var autoLatencyCompleted by remember(profile) { mutableStateOf(false) }
+    var probeJob by remember { mutableStateOf<Job?>(null) }
+    var directChecking by remember { mutableStateOf(false) }
+    var directBefore by remember { mutableStateOf("") }
+    var directDuring by remember { mutableStateOf("") }
     var disconnectRequested by remember { mutableStateOf(false) }
     var disconnectWarned by remember { mutableStateOf(false) }
     var disconnectStartedAt by remember { mutableLongStateOf(0L) }
@@ -217,6 +263,7 @@ fun CheemsApp() {
 
     fun connect() {
         runCatching {
+            check(!testingAllNodes && !directChecking) { "请先结束网络检测" }
             check(profile.isNotBlank()) { "请先导入节点" }
             CheemsBridge.connect(context, profile, selected)
             busy = true
@@ -332,27 +379,6 @@ fun CheemsApp() {
         }
     }
 
-    // Automatically populate ms values on the node screen once per profile.
-    // Keep at most three handshakes active and cancel safely on navigation.
-    LaunchedEffect(tab, profile, busy, disconnectRequested) {
-        if (tab != 1 || busy || disconnectRequested || testingAllNodes || autoLatencyCompleted) return@LaunchedEffect
-        val targets = nodes.filter { it.supported && (it.protocol == "hysteria2" || it.protocol == "anytls") }
-        if (targets.isEmpty()) return@LaunchedEffect
-        autoLatencyCompleted = true
-        testingAllNodes = true
-        try {
-            probeNodeBatch(context, profile, targets, nodeLatencies)
-        } catch (e: CancellationException) {
-            autoLatencyCompleted = false
-            throw e
-        } finally {
-            targets.forEach { node ->
-                if (nodeLatencies[node.index] == "测速中…") nodeLatencies[node.index] = "未完成"
-            }
-            testingAllNodes = false
-        }
-    }
-
     MaterialTheme(colorScheme = darkColorScheme(primary = Green, background = Background, surface = Panel)) {
         Column(Modifier.fillMaxSize().background(Background).systemBarsPadding().padding(20.dp)) {
             Text("DOREENA  /  MAKING", color = Green, fontSize = 14.sp, fontWeight = FontWeight.Bold)
@@ -408,10 +434,13 @@ fun CheemsApp() {
                                     val intent = VpnService.prepare(context)
                                     if (intent == null) connect() else permission.launch(intent)
                                 }
-                            }, enabled = !disconnectRequested && (!importing || running || busy || CheemsBridge.serviceAlive()),
+                            }, enabled = !disconnectRequested && (running || busy || CheemsBridge.serviceAlive() || (!importing && !testingAllNodes && !directChecking)),
                                 modifier = Modifier.fillMaxWidth().height(56.dp)) {
                                 Text(if (disconnectRequested || CheemsBridge.stopping()) "正在断开 VPN…"
                                     else if (running || busy || CheemsBridge.serviceAlive()) "断开连接" else "连接")
+                            }
+                            if (testingAllNodes) {
+                                TextButton(onClick = { probeJob?.cancel() }) { Text("停止测速后连接") }
                             }
                             Spacer(Modifier.height(12.dp))
                             OutlinedButton(
@@ -481,14 +510,14 @@ fun CheemsApp() {
                     1 -> {
                         Text("已导入 " + nodes.size + " 个节点 · 连接前选择", color = Color.LightGray, fontSize = 13.sp)
                         Spacer(Modifier.height(8.dp))
-                        Text("进入此页自动测量 HY2 / AnyTLS 节点延迟（ms），最多同时 3 个。",
+                        Text("仅在断开 VPN 后手动测速；最多同时 2 个，减少后台网络竞争。",
                             color = Color.LightGray, fontSize = 12.sp)
                         Spacer(Modifier.height(12.dp))
                         Button(onClick = {
                             testingAllNodes = true
                             val snapshot = profile
                             val targets = nodes.filter { it.supported && (it.protocol == "hysteria2" || it.protocol == "anytls") }
-                            scope.launch {
+                            probeJob = scope.launch {
                                 try {
                                     probeNodeBatch(context, snapshot, targets, nodeLatencies)
                                 } catch (e: CancellationException) {
@@ -500,11 +529,12 @@ fun CheemsApp() {
                                     testingAllNodes = false
                                 }
                             }
-                        }, enabled = !busy && !disconnectRequested && !testingAllNodes &&
+                        }, enabled = !running && !busy && !disconnectRequested && !testingAllNodes && !directChecking &&
                             nodes.any { it.supported && (it.protocol == "hysteria2" || it.protocol == "anytls") },
                             modifier = Modifier.fillMaxWidth()) {
                             Text(if (testingAllNodes) "正在测试节点延迟…" else "一键重新测试节点延迟")
                         }
+                        if (testingAllNodes) TextButton(onClick = { probeJob?.cancel() }) { Text("停止测速") }
                         Spacer(Modifier.height(12.dp))
                         nodes.forEach { node ->
                             PanelCard {
@@ -531,12 +561,18 @@ fun CheemsApp() {
                                         Text(if (selected == node.index) "当前选择" else "选择节点")
                                     }
                                     OutlinedButton(onClick = {
+                                        testingAllNodes = true
                                         nodeLatencies[node.index] = "测速中…"
                                         val snapshot = profile
-                                        scope.launch {
-                                            nodeLatencies[node.index] = probeLatency(context, snapshot, node.index)
+                                        probeJob = scope.launch {
+                                            try {
+                                                nodeLatencies[node.index] = probeLatency(context, snapshot, node.index)
+                                            } finally {
+                                                if (nodeLatencies[node.index] == "测速中…") nodeLatencies[node.index] = "未完成"
+                                                testingAllNodes = false
+                                            }
                                         }
-                                    }, enabled = !busy && !disconnectRequested && !testingAllNodes &&
+                                    }, enabled = !running && !busy && !disconnectRequested && !testingAllNodes && !directChecking &&
                                         node.supported && (node.protocol == "hysteria2" || node.protocol == "anytls") &&
                                         nodeLatencies[node.index] != "测速中…") {
                                         Text("测速")
@@ -609,6 +645,29 @@ fun CheemsApp() {
                         Text(CheemsBridge.version() + "\n原生支持：HY2 / AnyTLS / VLESS / VMess / SS2022 / TUIC / SOCKS5 等已实现协议。",
                             color = Color.White, fontSize = 13.sp)
                         Spacer(Modifier.height(14.dp))
+                        Spacer(Modifier.height(14.dp))
+                        Text("国内直连检测", color = Green, fontWeight = FontWeight.Bold)
+                        Text("手动检测百度与哔哩哔哩网页 DNS/HTTPS 响应；请在同一网络下分别断开和连接 VPN 后检测。结果不是应用内部延迟。", color = Color.LightGray, fontSize = 12.sp)
+                        OutlinedButton(onClick = {
+                            val connected = running
+                            directChecking = true
+                            scope.launch {
+                                try {
+                                    val result = withContext(Dispatchers.IO) { sampleDirectNetwork(context) }
+                                    val now = CheemsBridge.running()
+                                    if (now != connected) message = "VPN 状态已改变，请重新检测"
+                                    else if (connected) directDuring = result else directBefore = result
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    message = "直连检测失败：" + (e.message ?: e.javaClass.simpleName)
+                                } finally { directChecking = false }
+                            }
+                        }, enabled = !directChecking && !busy && !disconnectRequested && !testingAllNodes && !importing) {
+                            Text(if (directChecking) "检测中…" else "检测国内直连")
+                        }
+                        if (directBefore.isNotEmpty()) Text("VPN 关闭：\n" + directBefore, color = Color.LightGray, fontSize = 12.sp)
+                        if (directDuring.isNotEmpty()) Text("VPN 开启：\n" + directDuring, color = Color.LightGray, fontSize = 12.sp)
                         Spacer(Modifier.height(14.dp))
                         Text("运行诊断", color = Green, fontWeight = FontWeight.Bold)
                         TextButton(onClick = {
