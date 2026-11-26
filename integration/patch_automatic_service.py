@@ -14,3 +14,35 @@ replace(root / "CoreService.java", "Hysteria2Native.startTunnel(vpnInterface.get
 bridge = root / "net/Hysteria2Native.java"
 replace(bridge, "void startTunnel(long fd)", "void startTunnel(long fd, boolean automatic)")
 replace(bridge, 'getMethod("startTunnel",long.class)', 'getMethod(automatic ? "startAutomaticTunnel" : "startTunnel",long.class)')
+
+service = root / "CoreService.java"
+replace(service, "private android.net.Network physicalNetwork;",
+        "private volatile android.net.Network physicalNetwork;")
+replace(service, """    if(rawFd<0 || rawFd>Integer.MAX_VALUE || !protect((int)rawFd)) return false;
+    android.net.Network current=choosePhysicalNetwork();
+    if(current==null) return false;
+    try (ParcelFileDescriptor descriptor=ParcelFileDescriptor.fromFd((int)rawFd)) {
+      current.bindSocket(descriptor.getFileDescriptor());
+      physicalNetwork=current;
+      setUnderlyingNetworks(new android.net.Network[]{current});
+      return true;
+    }
+    catch(IOException e) { return false; }""", """    if (rawFd < 0 || rawFd > Integer.MAX_VALUE) return false;
+    try {
+      if (!protect((int) rawFd)) return false;
+      android.net.Network current = choosePhysicalNetwork();
+      if (current == null) return false;
+      try (ParcelFileDescriptor descriptor = ParcelFileDescriptor.fromFd((int) rawFd)) {
+        current.bindSocket(descriptor.getFileDescriptor());
+      }
+      synchronized (this) {
+        if (!current.equals(physicalNetwork) &&
+            setUnderlyingNetworks(new android.net.Network[]{current})) {
+          physicalNetwork = current;
+        }
+      }
+      return true;
+    } catch (IOException | RuntimeException rejected) {
+      // A rejected socket must be reported through the Go callback's boolean result.
+      return false;
+    }""")

@@ -254,11 +254,29 @@ fun CheemsApp() {
     var checkingConnection by remember { mutableStateOf(false) }
     var connectionCheck by remember { mutableStateOf("") }
     val startupPrefs = remember { context.getSharedPreferences("vpn_startup", 0) }
-    fun recentCrash(): String = if (startupPrefs.getBoolean("crash_pending", false)) {
-        "最近一次进程异常：" + startupPrefs.getString("crash_type", "未知") +
-            " · " + startupPrefs.getString("crash_thread", "未知线程") +
-            " · " + startupPrefs.getString("crash_site", "unknown")
-    } else "未记录到 Java 层崩溃；原生进程异常需要系统日志才能定位"
+    fun recentCrash(): String {
+        val javaCrash = if (startupPrefs.getBoolean("crash_pending", false)) {
+            "最近一次 Java 异常：" + startupPrefs.getString("crash_type", "未知") +
+                " · " + startupPrefs.getString("crash_site", "unknown")
+        } else "暂无 Java 异常记录"
+        if (Build.VERSION.SDK_INT < 30) return javaCrash
+        val exit = runCatching {
+            context.getSystemService(android.app.ActivityManager::class.java)
+                ?.getHistoricalProcessExitReasons(context.packageName, 0, 5)
+                ?.firstOrNull { it.processName == context.applicationInfo.processName }
+        }.getOrNull() ?: return javaCrash
+        val reason = when (exit.reason) {
+            android.app.ApplicationExitInfo.REASON_CRASH_NATIVE -> "原生进程崩溃"
+            android.app.ApplicationExitInfo.REASON_CRASH -> "应用异常"
+            android.app.ApplicationExitInfo.REASON_ANR -> "应用无响应"
+            android.app.ApplicationExitInfo.REASON_LOW_MEMORY -> "系统内存不足"
+            android.app.ApplicationExitInfo.REASON_SIGNALED -> "进程收到信号"
+            android.app.ApplicationExitInfo.REASON_USER_REQUESTED -> "用户或系统请求停止"
+            else -> "原因编号 ${exit.reason}"
+        }
+        val time = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(exit.timestamp))
+        return "$javaCrash\n系统最近退出记录：$time · $reason · 状态 ${exit.status}"
+    }
     var crashSummary by remember { mutableStateOf(recentCrash()) }
 
     fun connect() {

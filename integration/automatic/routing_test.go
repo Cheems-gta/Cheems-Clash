@@ -1,6 +1,8 @@
 package mobilebridge
 
 import (
+	"context"
+	"net"
 	"golang.org/x/net/dns/dnsmessage"
 	"net/netip"
 	"testing"
@@ -35,5 +37,16 @@ func TestAutomaticRouting(t *testing.T) {
 		if r.direct(netip.MustParseAddr("1.1.1.1")) != (host == "live.bilivideo.com.") {
 			t.Fatal(host)
 		}
+	}
+}
+
+func TestDirectDatagramClosedDuringRead(t *testing.T) {
+	local, peer := net.Pipe()
+	defer local.Close()
+	_ = peer.Close()
+	d := &directDatagram{Conn: local}
+	message, err := d.Read(context.Background())
+	if err == nil || len(message.Payload) != 0 {
+		t.Fatal("expected closed direct socket to return an error without data")
 	}
 }

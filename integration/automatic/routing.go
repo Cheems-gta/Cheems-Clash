@@ -159,9 +159,13 @@ func (r *autoRouter) dial(ctx context.Context, network, address string) (net.Con
 	return d.DialContext(ctx, network, address)
 }
 
-type directDatagram struct{ net.Conn }
+type directDatagram struct {
+	net.Conn
+	// Read has one consumer, which copies the payload before the next call.
+	buffer [65535]byte
+}
 
-func (d directDatagram) WriteTo(p []byte, target string) error {
+func (d *directDatagram) WriteTo(p []byte, target string) error {
 	a, err := netip.ParseAddrPort(target)
 	if err != nil || a.String() != d.RemoteAddr().String() {
 		return errors.New("UDP destination changed")
@@ -169,10 +173,12 @@ func (d directDatagram) WriteTo(p []byte, target string) error {
 	_, err = d.Write(p)
 	return err
 }
-func (d directDatagram) Read(ctx context.Context) (quictransport.UDPMessage, error) {
-	p := make([]byte, 65535)
-	n, err := d.Conn.Read(p)
-	return quictransport.UDPMessage{Address: d.RemoteAddr().String(), Payload: p[:n]}, err
+func (d *directDatagram) Read(ctx context.Context) (quictransport.UDPMessage, error) {
+	n, err := d.Conn.Read(d.buffer[:])
+	if err != nil {
+		return quictransport.UDPMessage{}, err
+	}
+	return quictransport.UDPMessage{Address: d.RemoteAddr().String(), Payload: d.buffer[:n]}, nil
 }
 func (r *autoRouter) domesticDNS(ctx context.Context, query []byte) ([]byte, error) {
 	c, err := r.dial(ctx, "tcp", "223.5.5.5:53")
@@ -213,7 +219,7 @@ func (h *vpnFlowHandler) routedUDP(ctx context.Context, dst netip.AddrPort) (udp
 		if err != nil {
 			return nil, err
 		}
-		return directDatagram{c}, nil
+		return &directDatagram{Conn: c}, nil
 	}
 	if h.udp == nil {
 		return nil, errors.New("node does not support UDP")
