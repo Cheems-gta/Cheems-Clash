@@ -1,0 +1,95 @@
+--- a/native/quic/mobilebridge/vpn_tunnel.go
++++ b/native/quic/mobilebridge/vpn_tunnel.go
+@@ -27,6 +27,12 @@
+ // StartTunnel attaches Android's established VPN descriptor to the Go TCP/IP
+ // stack. The fd is duplicated because the stack takes ownership of its copy.
+ func StartTunnel(fd int64) error {
++	return startTunnel(fd, false)
++}
++func StartAutomaticTunnel(fd int64) error {
++	return startTunnel(fd, true)
++}
++func startTunnel(fd int64, automatic bool) error {
+ 	if fd < 0 || fd > int64(^uint(0)>>1) {
+ 		return errors.New("invalid TUN file descriptor")
+ 	}
+@@ -65,6 +71,9 @@
+ 	ctx, cancel := context.WithCancel(context.Background())
+ 	metrics := resetTunnelDiagnostics()
+ 	handler := &vpnFlowHandler{tcp: current, udp: datagrams, dnsGate: make(chan struct{}, 32), metrics: metrics, ctx: ctx}
++	if automatic {
++		handler.auto = &autoRouter{network: network, cache: make(map[netip.Addr]routeEntry)}
++	}
+ 	stack, err := tun.NewStack("go", tun.StackOptions{Context: ctx, Tun: device, TunOptions: options, Handler: handler, Logger: logger.NOP(), UDPTimeout: 2 * time.Minute, ICMPTimeout: time.Minute})
+ 	if err != nil {
+ 		cancel()
+@@ -118,6 +127,7 @@
+ }
+ 
+ type vpnFlowHandler struct {
++	auto    *autoRouter
+ 	ctx     context.Context
+ 	tcp     tcpBackend
+ 	udp     udpBackend
+@@ -141,11 +151,15 @@
+ 		defer onClose(nil)
+ 	}
+ 	if isVirtualDNS(destination.AddrPort()) {
++		if h.auto != nil {
++			h.serveDNSStream(ctx, conn)
++			return
++		}
+ 		destination = M.ParseSocksaddr("1.1.1.1:53")
+ 	}
+ 	h.metricsOrCurrent().active.Add(1)
+ 	defer h.metricsOrCurrent().active.Add(-1)
+-	upstream, err := h.tcp.OpenTCP(ctx, destination.AddrString(), int(destination.Port))
++	upstream, err := h.routedTCP(ctx, destination.Addr, destination.Port)
+ 	if err != nil {
+ 		h.recordError("TCP 建连", err)
+ 		return
+@@ -209,14 +223,13 @@
+ 	if onClose != nil {
+ 		defer onClose(nil)
+ 	}
+-	if h.udp == nil {
+-		return
+-	}
+-	assoc, err := h.udp.OpenUDPAssociation(destination.String())
++	assoc, err := h.routedUDP(ctx, destination.AddrPort())
+ 	if err != nil {
+ 		return
+ 	}
+ 	defer assoc.Close()
++	stop := context.AfterFunc(ctx, func() { assoc.Close() })
++	defer stop()
+ 	h.metricsOrCurrent().active.Add(1)
+ 	defer h.metricsOrCurrent().active.Add(-1)
+ 	go func() {
+@@ -292,6 +305,9 @@
+ 		if !matchingDNSResponse(query, response) {
+ 			return errors.New("invalid DNS response")
+ 		}
++		if h.auto != nil {
++			h.auto.remember(query, response)
++		}
+ 		packet := buf.NewSize(len(response))
+ 		_, _ = packet.Write(response)
+ 		// Return the virtual DNS address originally queried by Android, including IPv6.
+@@ -302,6 +318,16 @@
+ 		h.metricsOrCurrent().down.Add(int64(len(response)))
+ 		return nil
+ 	}
++	if h.auto != nil && dnsPolicy(query) == directRoute {
++		response, err := h.auto.domesticDNS(parent, query)
++		if err == nil {
++			err = send(response)
++		}
++		if err != nil {
++			h.recordError("直连 DNS", err)
++		}
++		return
++	}
+ 	if h.udp != nil {
+ 		assoc, err := h.udp.OpenUDPAssociation("1.1.1.1:53")
+ 		if err == nil {
