@@ -1,6 +1,7 @@
-# Domestic direct responsiveness experiment
+# Domestic connectivity recovery experiment
 
-- Existing package bypass policy is unchanged. Direct apps do not traverse Making.
-- Automatic mass latency probes are removed; manual probes only while disconnected, with concurrency 2 and a cancel action. Connection is blocked while a probe is in flight.
-- Underlying network selection honors Android's default physical network, prefers a previously validated network if the default is a VPN, then a validated alternative. Duplicate successful underlying network publications are suppressed. No MTU, DNS upstream, protocol, or certificate changes.
-- Settings offers explicit DNS and HTTPS-header measurements to Baidu/Bilibili using the client's excluded physical network. No auto/background probe. These samples are not app-internal delays, may include cached DNS, TLS/HTTP setup and server response, and depend on CDN, radio, and server load. Compare repeated samples on the same network with VPN on/off. Do not infer improvement from compilation alone.
+- The physical-network selection/publication change in 48e00b6 is rolled back from the Android build after a user report of failed external connectivity. Restore the pinned CoreService network-selection behavior; this is an isolation step, not a confirmed root-cause fix.
+- Keep the first-stage app split tunnel and TCP relay patch. WeChat, QQ and Bilibili bypass the VPN when the explicit app-split switch is on. Other apps retain the existing routing. No GeoIP/domain rules are implemented.
+- Keep manual-only latency probes while disconnected and the user-initiated DNS/HTTPS direct comparison in Settings.
+- No changes to native protocols, MTU, DNS upstream or certificate handling. Existing certificate bypass remains a security risk.
+- Acceptance: same network and node, verify direct apps and proxied apps concurrently, test multi-minute streaming, reconnect and compare latency. Compilation alone is not proof of recovery.

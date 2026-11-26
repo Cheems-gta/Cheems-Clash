@@ -62,7 +62,6 @@ jobs:
           python3 integration/patch_making_timeout.py
           python3 integration/patch_domestic_routing.py
           python3 integration/patch_stream_relay.py
-          python3 integration/patch_physical_network.py
           sed -i 's/new Intent(this, MainActivity.class)/new Intent(this, com.cheems.clash.MainActivity.class)/g' app/src/main/java/win/cheems/core/CoreService.java
           # Cosmetic-only notification branding; leave native VPN implementation untouched.
           sed -i 's/android.R.drawable.stat_sys_upload_done/com.cheems.clash.R.drawable.ic_notification/g' app/src/main/java/win/cheems/core/CoreService.java
