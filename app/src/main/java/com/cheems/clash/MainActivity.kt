@@ -260,11 +260,12 @@ fun CheemsApp() {
                 " · " + startupPrefs.getString("crash_site", "unknown")
         } else "暂无 Java 异常记录"
         if (Build.VERSION.SDK_INT < 30) return javaCrash
-        val exit = runCatching {
+        val exits = runCatching {
             context.getSystemService(android.app.ActivityManager::class.java)
-                ?.getHistoricalProcessExitReasons(context.packageName, 0, 5)
-                ?.firstOrNull { it.processName == context.applicationInfo.processName }
+                ?.getHistoricalProcessExitReasons(context.packageName, 0, 16)
+                ?.filter { it.processName == context.applicationInfo.processName }
         }.getOrNull() ?: return javaCrash
+        val exit = exits.firstOrNull() ?: return javaCrash
         val reason = when (exit.reason) {
             android.app.ApplicationExitInfo.REASON_CRASH_NATIVE -> "原生进程崩溃"
             android.app.ApplicationExitInfo.REASON_CRASH -> "应用异常"
@@ -275,9 +276,16 @@ fun CheemsApp() {
             else -> "原因编号 ${exit.reason}"
         }
         val time = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(exit.timestamp))
-        return "$javaCrash\n系统最近退出记录：$time · $reason · 状态 ${exit.status}"
+        val native = exits.firstOrNull { it.reason == android.app.ApplicationExitInfo.REASON_CRASH_NATIVE }
+        val frames = if (Build.VERSION.SDK_INT >= 31 && native != null) {
+            val whenNative = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(native.timestamp))
+            val summary = runCatching { native.traceInputStream?.use { NativeFrames.read(it) } }.getOrNull()
+            "\n原生栈 $whenNative\n" + (summary?.ifBlank { null } ?: "系统未提供可读栈帧")
+        } else ""
+        return "$javaCrash\n系统最近退出记录：$time · $reason · 状态 ${exit.status}$frames"
     }
-    var crashSummary by remember { mutableStateOf(recentCrash()) }
+    var crashSummary by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) { crashSummary = withContext(Dispatchers.IO) { recentCrash() } }
 
     fun connect() {
         runCatching {
@@ -691,7 +699,7 @@ fun CheemsApp() {
                         TextButton(onClick = {
                             diagnostics = runCatching { CheemsBridge.diagnostics() }
                                 .getOrElse { "读取运行记录失败：" + it.javaClass.simpleName }
-                            crashSummary = recentCrash()
+                            scope.launch { crashSummary = withContext(Dispatchers.IO) { recentCrash() } }
                         }) { Text("刷新记录") }
                         Spacer(Modifier.height(8.dp))
                         Text(crashSummary, color = Color(0xFFFFB4AB), fontSize = 12.sp)

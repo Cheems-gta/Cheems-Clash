@@ -18,7 +18,7 @@
  	metrics := resetTunnelDiagnostics()
  	handler := &vpnFlowHandler{tcp: current, udp: datagrams, dnsGate: make(chan struct{}, 32), metrics: metrics, ctx: ctx}
 +	if automatic {
-+		handler.auto = &autoRouter{network: network, cache: make(map[netip.Addr]routeEntry)}
++		handler.auto = &autoRouter{cache: make(map[netip.Addr]routeEntry)}
 +	}
  	stack, err := tun.NewStack("go", tun.StackOptions{Context: ctx, Tun: device, TunOptions: options, Handler: handler, Logger: logger.NOP(), UDPTimeout: 2 * time.Minute, ICMPTimeout: time.Minute})
  	if err != nil {

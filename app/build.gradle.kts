@@ -22,6 +22,7 @@ android {
     buildFeatures { compose = true }
 }
 dependencies {
+    implementation("com.google.protobuf:protobuf-javalite:4.29.3")
     implementation(files("libs/cheems-quic.aar"))
     implementation("org.yaml:snakeyaml:2.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

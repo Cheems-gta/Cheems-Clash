@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -57,7 +56,6 @@ type routeEntry struct {
 	expiry time.Time
 }
 type autoRouter struct {
-	network Network
 	mu      sync.Mutex
 	cache   map[netip.Addr]routeEntry
 }
@@ -146,16 +144,9 @@ func (r *autoRouter) remember(query, response []byte) {
 	}
 }
 func (r *autoRouter) dial(ctx context.Context, network, address string) (net.Conn, error) {
-	d := net.Dialer{Timeout: 8 * time.Second, Control: func(_, _ string, c syscall.RawConn) error {
-		ok := false
-		if err := c.Control(func(fd uintptr) { ok = r.network.Protect(int64(fd)) }); err != nil {
-			return err
-		}
-		if !ok {
-			return errors.New("physical network binding rejected")
-		}
-		return nil
-	}}
+	// Android excludes the service UID from its own tunnel. Numeric destinations
+	// use the physical default network without a per-flow JNI callback.
+	d := net.Dialer{Timeout: 8 * time.Second}
 	return d.DialContext(ctx, network, address)
 }
 

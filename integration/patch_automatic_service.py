@@ -46,3 +46,6 @@ replace(service, """    if(rawFd<0 || rawFd>Integer.MAX_VALUE || !protect((int)r
       // A rejected socket must be reported through the Go callback's boolean result.
       return false;
     }""")
+
+if service.read_text().count(".addDisallowedApplication(getPackageName())") != 1:
+    raise SystemExit("Automatic direct sockets require the service UID to bypass its VPN")

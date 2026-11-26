@@ -6,6 +6,7 @@ import (
 	"golang.org/x/net/dns/dnsmessage"
 	"net/netip"
 	"testing"
+	"time"
 )
 
 func TestAutomaticRouting(t *testing.T) {
@@ -48,5 +49,43 @@ func TestDirectDatagramClosedDuringRead(t *testing.T) {
 	message, err := d.Read(context.Background())
 	if err == nil || len(message.Payload) != 0 {
 		t.Fatal("expected closed direct socket to return an error without data")
+	}
+}
+
+func TestAutomaticDirectUDP(t *testing.T) {
+	server, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	dst := netip.MustParseAddrPort(server.LocalAddr().String())
+	handler := vpnFlowHandler{auto: &autoRouter{cache: map[netip.Addr]routeEntry{
+		dst.Addr(): {route: directRoute, expiry: time.Now().Add(time.Minute)},
+	}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	assoc, err := handler.routedUDP(ctx, dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer assoc.Close()
+	deadline, _ := ctx.Deadline()
+	server.SetDeadline(deadline)
+	stop := context.AfterFunc(ctx, func() { assoc.Close() })
+	defer stop()
+	if err := assoc.WriteTo([]byte("ping"), dst.String()); err != nil {
+		t.Fatal(err)
+	}
+	var payload [4]byte
+	n, peer, err := server.ReadFrom(payload[:])
+	if err != nil || string(payload[:n]) != "ping" {
+		t.Fatalf("server receive: %v", err)
+	}
+	if _, err = server.WriteTo([]byte("pong"), peer); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := assoc.Read(ctx)
+	if err != nil || string(reply.Payload) != "pong" {
+		t.Fatalf("direct reply: %v", err)
 	}
 }
