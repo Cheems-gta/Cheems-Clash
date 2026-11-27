@@ -66,7 +66,18 @@
  	h.metricsOrCurrent().active.Add(1)
  	defer h.metricsOrCurrent().active.Add(-1)
  	go func() {
-@@ -292,6 +305,9 @@
+@@ -237,7 +250,9 @@
+ 			break
+ 		}
+ 		target := M.ParseSocksaddr(message.Address)
+-		packet := buf.NewSize(len(message.Payload))
++		frontHeadroom := N.CalculateFrontHeadroom(conn)
++		packet := buf.NewSize(frontHeadroom + len(message.Payload))
++		packet.Resize(frontHeadroom, 0)
+ 		_, _ = packet.Write(message.Payload)
+ 		if e = conn.WritePacket(packet, target); e != nil {
+ 			return
+@@ -292,6 +307,9 @@
  		if !matchingDNSResponse(query, response) {
  			return errors.New("invalid DNS response")
  		}
@@ -76,7 +87,7 @@
  		packet := buf.NewSize(len(response))
  		_, _ = packet.Write(response)
  		// Return the virtual DNS address originally queried by Android, including IPv6.
-@@ -302,6 +318,16 @@
+@@ -302,6 +320,16 @@
  		h.metricsOrCurrent().down.Add(int64(len(response)))
  		return nil
  	}
